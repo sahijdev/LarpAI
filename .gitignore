@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# WXT
+extension/.output/
+extension/.wxt/
+
+# Convex local state (convex/_generated is committed)
+.convex/
+
+*.log
+.DS_Store

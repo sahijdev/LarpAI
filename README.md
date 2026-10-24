@@ -212,9 +212,17 @@ Agree on `shared/types.ts` **first**; everyone builds against it.
 
 ## 12. Setup (fill in as we go)
 
+Requires **Node 22.12+** (Convex CLI, WXT and Vite all fail on older Node 20.x).
+
 ```bash
+# install everything (root workspace includes /extension)
+npm install
+
 # backend
 npx convex dev
+
+# extension: copy extension/.env.example to extension/.env.local and set VITE_CONVEX_URL
+# to the CONVEX_URL that `npx convex dev` wrote to the root .env.local
 
 # extension
 cd extension && npm install && npm run dev
