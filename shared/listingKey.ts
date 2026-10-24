@@ -13,7 +13,9 @@ export function normalizeListingKey(url: string, itemId?: string): string {
       ? "aliexpress"
       : /temu\.com/.test(host)
         ? "temu"
-        : "other";
+        : /(^|\.)amazon\./.test(host)
+          ? "amazon"
+          : "other";
 
   const id = itemId ?? parsed?.searchParams.get("id") ?? undefined;
   if (id) return `${site}:${id}`;

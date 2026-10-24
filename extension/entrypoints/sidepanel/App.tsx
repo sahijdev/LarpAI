@@ -5,7 +5,35 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import type { CheckName, CheckResult, ListingInput, Verdict } from "../../../shared/types";
 import { CHECK_NAMES } from "../../../shared/listingKey";
 
-const SUPPORTED = /^https?:\/\/(item\.taobao\.com|detail\.tmall\.com)\//;
+// Taobao/Tmall item pages, Temu product pages ("...-g-<id>.html" or "goods.html?goods_id="),
+// and Amazon product pages ("/dp/<ASIN>" or "/gp/product/<ASIN>").
+const SUPPORTED = new RegExp(
+  [
+    String.raw`^https?://(item\.taobao\.com|detail\.tmall\.com)/`,
+    String.raw`^https?://world\.taobao\.com/item/`,
+    String.raw`^https?://([a-z]+\.)?temu\.com/(.*-g-\d+\.html|goods\.html\?.*goods_id=)`,
+    String.raw`^https?://(www\.|smile\.)?amazon\.(com|co\.uk|ca)/(.*/)?(dp|gp/product)/[A-Z0-9]{10}`,
+  ].join("|"),
+);
+
+type ExtractResponse = { ok: true; listing: ListingInput } | { ok: false; error: string } | undefined;
+
+// Chrome only injects content scripts on page load, so a tab opened before the extension was
+// installed or reloaded (every dev rebuild) has none. Inject it on demand and ask again.
+async function requestListing(tabId: number): Promise<ExtractResponse> {
+  const ask = () => browser.tabs.sendMessage(tabId, { type: "larpai:extract" }) as Promise<ExtractResponse>;
+  try {
+    return await ask();
+  } catch (err) {
+    if (!/Receiving end does not exist|Could not establish connection/i.test(String(err))) throw err;
+    await browser.scripting.executeScript({ target: { tabId }, files: ["/content-scripts/content.js"] });
+    try {
+      return await ask();
+    } catch {
+      throw new Error("Couldn't read this page. Reload the tab and try again.");
+    }
+  }
+}
 
 type Phase =
   | { kind: "idle" }
@@ -27,10 +55,7 @@ export default function App() {
       }
       setPhase({ kind: "extracting" });
       try {
-        const res = (await browser.tabs.sendMessage(tab.id, { type: "larpai:extract" })) as
-          | { ok: true; listing: ListingInput }
-          | { ok: false; error: string }
-          | undefined;
+        const res = await requestListing(tab.id);
         if (!res) throw new Error("Couldn't reach the page. Try reloading the listing tab.");
         if (!res.ok) throw new Error(res.error);
         if (res.listing.sellerImages.length === 0) {
@@ -72,7 +97,7 @@ export default function App() {
       </header>
       {phase.kind === "idle" && <p className="text-neutral-500">Loading…</p>}
       {phase.kind === "unsupported" && (
-        <p className="text-neutral-500">Open a Taobao or Tmall product page to check whether the listing matches reality.</p>
+        <p className="text-neutral-500">Open a Taobao, Tmall, Temu or Amazon product page to check whether the listing matches reality.</p>
       )}
       {phase.kind === "extracting" && <p className="text-neutral-500">Reading this listing…</p>}
       {phase.kind === "error" && (
