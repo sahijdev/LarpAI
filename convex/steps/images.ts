@@ -76,7 +76,7 @@ async function compareWithClaude(groups: Record<Group, Img[]>, title: string) {
   });
 
   const res = await client.messages.parse({
-    model: "claude-haiku-5-5",
+    model: "claude-sonnet-5-5",
     max_tokens: 4096,
     output_config: { effort: "medium", format: zodOutputFormat(ImageComparison) },
     messages: [{ role: "user", content }],

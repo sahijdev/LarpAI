@@ -9,6 +9,21 @@ const GENERIC_PHRASES = [
   "good", "great", "nice", "perfect", "recommend", "excellent",
 ];
 
+// Marketplace-generated placeholders (e.g. Taobao's "系统默认好评" when a buyer never reviews).
+// Not written by buyers, so they're neither evidence nor "duplicates". Covers simplified/traditional
+// Chinese and the English text Taobao's translated pages show.
+const SYSTEM_REVIEW = [
+  /系[统統]默[认認]好[评評]/,
+  /默[认認]好[评評]/,
+  /此用[户戶]没有填写[评評]价/,
+  /未及[时時].{0,6}[评評]价/,
+  /did not (leave|write|make) a (timely|review)/i,
+  /system default(ed)?/i,
+  /default (positive|good) (review|rating|feedback)/i,
+];
+
+const isSystemReview = (text: string) => SYSTEM_REVIEW.some((re) => re.test(text));
+
 type Flag = { kind: string; detail: string; weight: number };
 
 function normalize(text: string) {
@@ -27,9 +42,18 @@ function similarity(a: string, b: string): number {
 }
 
 export async function runReviews(listing: ListingInput): Promise<StepOutput> {
-  const reviews = listing.reviews.filter((r) => r.text.trim().length > 0);
+  const nonEmpty = listing.reviews.filter((r) => r.text.trim().length > 0);
+  const reviews = nonEmpty.filter((r) => !isSystemReview(r.text));
+  const systemDefaults = nonEmpty.length - reviews.length;
+  const defaultsNote = systemDefaults
+    ? ` (${systemDefaults} automatic "default" reviews from the marketplace ignored)`
+    : "";
   if (reviews.length < 3) {
-    return { status: "skipped", summary: `Only ${reviews.length} visible reviews, too few to judge` };
+    return {
+      status: "skipped",
+      summary: `Only ${reviews.length} buyer-written review${reviews.length === 1 ? "" : "s"} visible, too few to judge${defaultsNote}`,
+      details: { analyzed: reviews.length, systemDefaults },
+    };
   }
 
   const texts = reviews.map((r) => normalize(r.text));
@@ -72,9 +96,10 @@ export async function runReviews(listing: ListingInput): Promise<StepOutput> {
   const score = clamp(100 - flags.reduce((sum, f) => sum + f.weight, 0));
   return {
     score,
-    summary: flags.length
-      ? `Suspicious review patterns: ${flags.map((f) => f.detail).join("; ")}`
-      : `No suspicious patterns across ${reviews.length} visible reviews`,
-    details: { analyzed: reviews.length, flags },
+    summary:
+      (flags.length
+        ? `Suspicious review patterns: ${flags.map((f) => f.detail).join("; ")}`
+        : `No suspicious patterns across ${reviews.length} visible reviews`) + defaultsNote,
+    details: { analyzed: reviews.length, systemDefaults, flags },
   };
 }
