@@ -6,6 +6,18 @@ export function requireEnv(name: string): string {
   return value;
 }
 
+// Hostname without "www.", or undefined for anything that isn't an absolute http(s) URL
+// (search results occasionally include relative or malformed links).
+export function hostOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return /^https?:$/.test(parsed.protocol) ? parsed.hostname.replace(/^www\./, "") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function fetchWithTimeout(url: string, ms = 10_000, init?: RequestInit): Promise<Response> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
   if (!res.ok) throw new Error(`${new URL(url).hostname} returned HTTP ${res.status}`);

@@ -6,7 +6,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod/v4";
 import type { ListingInput } from "../../shared/types";
 import type { StepOutput } from "../pipeline";
-import { requireEnv } from "./util";
+import { hostOf, requireEnv } from "./util";
 
 export type Comparable = {
   url: string;
@@ -34,18 +34,19 @@ const SearchPlan = z.object({
   productName: z.string(),
 });
 
-// Taobao titles are Chinese and keyword-stuffed; turn one into a clean web search.
+// Marketplace titles (Chinese on Taobao, English on Temu) are keyword-stuffed; turn one into a clean web search.
 async function planSearch(listing: ListingInput): Promise<z.infer<typeof SearchPlan>> {
   const client = new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY") });
   const res = await client.messages.parse({
-    model: "claude-haiku-5-5",
+    model: "claude-sonnet-5-5",
     max_tokens: 1024,
     output_config: { effort: "low", format: zodOutputFormat(SearchPlan) },
     messages: [
       {
         role: "user",
         content:
-          "This is a product title from a Chinese shopping listing. Give a short English web search query " +
+          "This is a product title from an online marketplace listing (it may be Chinese or keyword-stuffed English). " +
+          "Give a short English web search query " +
           "that would find the official product page or reputable retailers for the same item, the brand " +
           "if one is identifiable (null if generic/unbranded), and a short product name.\n\n" +
           `Title: ${listing.title}\nBrand hint: ${listing.brandGuess ?? "none"}`,
@@ -116,7 +117,10 @@ async function scrapePages(apify: ApifyClient, urls: string[]): Promise<PageItem
     { waitSecs: 90 },
   );
   const { items } = await apify.dataset(run.defaultDatasetId).listItems();
-  return items as unknown as PageItem[];
+  // Pages that failed (blocked with 403, timed out) come back as "#error" rows with no url; drop them.
+  return (items as unknown as (PageItem & { "#error"?: boolean })[]).filter(
+    (item) => !item["#error"] && hostOf(item.url),
+  );
 }
 
 export async function runComparison(listing: ListingInput): Promise<StepOutput> {
@@ -137,13 +141,20 @@ export async function runComparison(listing: ListingInput): Promise<StepOutput> 
     brand ? `${brand} official site` : undefined,
   ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
 
+  // Don't "compare" a listing against its own site (e.g. an Amazon listing vs. other Amazon pages).
+  const ownHost = hostOf(listing.url);
+  const isReference = (url: string) => {
+    const host = hostOf(url);
+    return !!host && !MARKETPLACE_HOSTS.test(host) && !(ownHost && host.endsWith(ownHost));
+  };
+
   const queriesTried: string[] = [];
   let results: OrganicResult[] = [];
   let query = candidates[0];
   for (const q of candidates) {
     queriesTried.push(q);
     query = q;
-    results = (await googleSearch(apify, q)).filter((r) => r.url && !MARKETPLACE_HOSTS.test(r.url));
+    results = (await googleSearch(apify, q)).filter((r) => r.url && isReference(r.url));
     if (results.length > 0) break;
   }
   if (results.length === 0) {
@@ -152,10 +163,13 @@ export async function runComparison(listing: ListingInput): Promise<StepOutput> 
 
   const brandSlug = brand?.toLowerCase().replace(/[^a-z0-9]/g, "");
   const isOfficial = (url: string) =>
-    !!brandSlug && brandSlug.length > 2 && new URL(url).hostname.replace(/[^a-z0-9]/g, "").includes(brandSlug);
+    !!brandSlug && brandSlug.length > 2 && (hostOf(url) ?? "").replace(/[^a-z0-9]/g, "").includes(brandSlug);
 
   const urls = results.slice(0, MAX_PAGES).map((r) => r.url!);
   const pages = await scrapePages(apify, urls);
+  if (pages.length === 0) {
+    throw new Error(`Found ${urls.length} search results for "${query}", but every page blocked the scraper or failed to load`);
+  }
   const comparables: Comparable[] = pages.map((p) => ({
     url: p.url,
     title: p.title,

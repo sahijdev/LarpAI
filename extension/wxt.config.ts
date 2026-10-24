@@ -11,8 +11,17 @@ export default defineConfig({
   manifest: {
     name: "LarpAI",
     description: "Is this listing larping? Checks whether a shopping listing matches what you'll actually get.",
-    permissions: ["sidePanel", "tabs"],
-    host_permissions: ["*://item.taobao.com/*", "*://detail.tmall.com/*"],
+    // scripting: re-inject the content script into tabs opened before the extension (re)loaded.
+    permissions: ["sidePanel", "tabs", "scripting"],
+    host_permissions: [
+      "*://item.taobao.com/*",
+      "*://detail.tmall.com/*",
+      "*://world.taobao.com/*",
+      "*://*.temu.com/*",
+      "*://*.amazon.com/*",
+      "*://*.amazon.co.uk/*",
+      "*://*.amazon.ca/*",
+    ],
     action: { default_title: "Check this listing" },
   },
 });

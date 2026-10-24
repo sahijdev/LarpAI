@@ -19,3 +19,19 @@ export const SELECTORS = {
   reviewStars: ['[class*="starWrapper--"] [class*="active"]'],
   brand: ['[class*="BasicAttributes--"] [class*="brand"]', '[class*="brandName"]'],
 } as const;
+
+// world.taobao.com (Taobao's international site, /item/<encoded id>.htm). Checked against a live page (Oct 2026).
+// Signed out, it shows a truncated title and placeholder gallery images; og:title / og:image fill the gap.
+export const WORLD_SELECTORS = {
+  title: [".item-intro .item-title"],
+  price: [".price-box .price"],
+  galleryImages: [".left-intro img.item-thumbnail", ".left-intro img.item-img"],
+  reviewItems: [".rate-list li.item"],
+  reviewText: [".rate-bottom .content"],
+  reviewDate: [".date-info"],
+  // Buyer photos are in the review body. The image in .rate-top is the reviewer's avatar: never read it.
+  reviewPhotos: [".rate-bottom img:not(.useful-icon)"],
+} as const;
+
+// Taobao's 2x2 transparent placeholders (lazy-loading / signed-out view).
+export const TAOBAO_PLACEHOLDER = /-tps-2-2\.|T12pdtXaldXXXXXXXX-2-2/;
