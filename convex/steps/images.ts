@@ -1,6 +1,8 @@
 "use node";
 
-import { GoogleGenAI, Type } from "@google/genai";
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { z } from "zod/v4";
 import phash from "sharp-phash";
 import distance from "sharp-phash/distance";
 import sharp from "sharp";
@@ -19,7 +21,7 @@ async function loadGroup(urls: string[]): Promise<Img[]> {
   const settled = await Promise.allSettled(
     urls.slice(0, MAX_PER_GROUP).map(async (url) => {
       const { buffer } = await fetchImage(url);
-      // Re-encode to JPEG: Gemini and pHash both handle it, and it strips webp/avif surprises.
+      // Re-encode to JPEG: Claude and pHash both handle it, and it strips webp/avif surprises.
       const jpeg = await sharp(buffer).resize(768, 768, { fit: "inside" }).jpeg().toBuffer();
       return { url: normalizeImageUrl(url), buffer: jpeg, mimeType: "image/jpeg" };
     }),
@@ -43,44 +45,45 @@ async function findReusedPhotos(seller: Img[], official: Img[]) {
   return matches;
 }
 
-const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    matchScore: { type: Type.INTEGER, description: "0-100, how well seller photos represent what buyers received" },
-    mismatches: { type: Type.ARRAY, items: { type: Type.STRING } },
-    explanation: { type: Type.STRING },
-  },
-  required: ["matchScore", "mismatches", "explanation"],
-};
+const ImageComparison = z.object({
+  matchScore: z.number().describe("0-100, how well seller photos represent what buyers received"),
+  mismatches: z.array(z.string()),
+  explanation: z.string(),
+});
 
-async function compareWithGemini(groups: Record<Group, Img[]>, title: string) {
-  const ai = new GoogleGenAI({ apiKey: requireEnv("GEMINI_API_KEY") });
-  const parts: { text?: string; inlineData?: { mimeType: string; data: string } }[] = [
-    {
-      text:
-        `Product listing: "${title}".\n` +
-        "Compare the photo groups below. SELLER photos are the listing's marketing images. " +
-        "BUYER photos are what customers posted in reviews. OFFICIAL photos come from the brand or reputable retailers. " +
-        "Judge whether the seller photos honestly represent the product buyers actually received: color, material, " +
-        "shape, size, logo, finish, details. Ignore lighting and photo quality. If a group is missing, say so and judge " +
-        "only what you can. List concrete mismatches.",
-    },
-  ];
+async function compareWithClaude(groups: Record<Group, Img[]>, title: string) {
+  const client = new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY") });
+  const content: Anthropic.ContentBlockParam[] = [];
   for (const group of ["seller", "buyer", "official"] as const) {
     if (groups[group].length === 0) continue;
-    parts.push({ text: `${group.toUpperCase()} photos:` });
+    content.push({ type: "text", text: `${group.toUpperCase()} photos:` });
     for (const img of groups[group]) {
-      parts.push({ inlineData: { mimeType: img.mimeType, data: img.buffer.toString("base64") } });
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: img.buffer.toString("base64") },
+      });
     }
   }
-
-  const res = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [{ role: "user", parts }],
-    config: { responseMimeType: "application/json", responseSchema },
+  content.push({
+    type: "text",
+    text:
+      `Product listing: "${title}".\n` +
+      "Compare the photo groups above. SELLER photos are the listing's marketing images. " +
+      "BUYER photos are what customers posted in reviews. OFFICIAL photos come from the brand or reputable retailers. " +
+      "Judge whether the seller photos honestly represent the product buyers actually received: color, material, " +
+      "shape, size, logo, finish, details. Ignore lighting and photo quality. If a group is missing, say so and judge " +
+      "only what you can. List concrete mismatches.",
   });
-  if (!res.text) throw new Error("Gemini returned no image analysis");
-  return JSON.parse(res.text) as { matchScore: number; mismatches: string[]; explanation: string };
+
+  const res = await client.messages.parse({
+    model: "claude-haiku-5-5",
+    max_tokens: 4096,
+    output_config: { effort: "medium", format: zodOutputFormat(ImageComparison) },
+    messages: [{ role: "user", content }],
+  });
+  if (res.stop_reason === "refusal") throw new Error("Claude declined to compare these photos");
+  if (!res.parsed_output) throw new Error("Claude returned an image analysis we couldn't read");
+  return res.parsed_output;
 }
 
 export async function runImages(listing: ListingInput, found?: ComparisonDetails): Promise<StepOutput> {
@@ -98,21 +101,21 @@ export async function runImages(listing: ListingInput, found?: ComparisonDetails
     };
   }
 
-  const [reused, gemini] = await Promise.all([
+  const [reused, vision] = await Promise.all([
     official.length > 0 ? findReusedPhotos(seller, official) : Promise.resolve([]),
-    compareWithGemini({ seller, buyer, official }, listing.title),
+    compareWithClaude({ seller, buyer, official }, listing.title),
   ]);
 
   const gaps = [buyer.length === 0 && "no buyer photos", official.length === 0 && "no official photos"].filter(Boolean);
 
   return {
-    score: clamp(gemini.matchScore),
-    summary: gemini.mismatches.length
-      ? `Photos differ: ${gemini.mismatches.slice(0, 2).join("; ")}`
+    score: clamp(vision.matchScore),
+    summary: vision.mismatches.length
+      ? `Photos differ: ${vision.mismatches.slice(0, 2).join("; ")}`
       : "Seller photos look consistent with what buyers received",
     details: {
-      explanation: gemini.explanation,
-      mismatches: gemini.mismatches,
+      explanation: vision.explanation,
+      mismatches: vision.mismatches,
       reusedOfficialPhotos: reused,
       compared: { seller: seller.length, buyer: buyer.length, official: official.length },
       gaps,
