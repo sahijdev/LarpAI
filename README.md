@@ -30,7 +30,7 @@ A Chrome extension. When a user opens a product listing (starting with **Taobao*
 | **Apify** | $2k / $1k / $800 / $400 / $400 (+$400 best Actor) | Meaningful use of Apify, overall quality | Apify is how we get all comparison data; stretch goal: publish our own Actor |
 | **Convex** | $5,000 | Convex as the real backend | DB, server functions, cached reports, live-streaming results to the side panel |
 | **Anthropic** | TBD | Named community, real lived problem, one thing done well, thoughtful Claude use incl. failure modes | Claude writes the final verdict; we show where it could be wrong and how we handle that |
-| **MLH Gemini / Gen AI** | Swag | Use of Gemini / any gen-AI API | Gemini does the vision comparison |
+| **MLH Gemini / Gen AI** | Swag | Use of Gemini / any gen-AI API | Claude does the vision comparison and the verdict (qualifies under "any gen-AI API"; no Gemini) |
 | **Cal Hacks general** | Overall, People-First, Most Creative | Strong live demo, clear user | Automatic; polish the demo |
 
 **Dropped:** Bright Data (login-rule risk on Taobao), Coinbase x402 (no natural fit), Hyphenate (finance-only).
@@ -57,7 +57,7 @@ A Chrome extension. When a user opens a product listing (starting with **Taobao*
 | Web data | **Apify** (JS client, `apify-client`) | Called from Convex actions; existing Store Actors for Google Search + product pages |
 | Image: duplicates | **Perceptual hash** (`sharp` + an image-hash package) | In a Convex Node action. Catches stolen/reused photos |
 | Image: similarity | **CLIP via Hugging Face inference** | **Optional**, cut first if short on time |
-| Image: explanation | **Gemini (Google AI Studio free tier)** | Multi-image prompt: seller vs. buyer vs. official photos |
+| Image: explanation | **Claude API** (vision) | Multi-image prompt: seller vs. buyer vs. official photos |
 | Final verdict | **Claude API** | Takes all evidence → score, verdict, reasons, confidence |
 
 ---
@@ -72,7 +72,7 @@ A Chrome extension. When a user opens a product listing (starting with **Taobao*
                               │
                               ├─ creates Report doc (status: "running")
                               ├─ step: comparison  → Apify  → save CheckResult
-                              ├─ step: images      → pHash + Gemini (+CLIP) → save CheckResult
+                              ├─ step: images      → pHash + Claude vision (+CLIP) → save CheckResult
                               ├─ step: reviews     → heuristics (+LLM)      → save CheckResult
                               ├─ step: price       → compare vs. found prices → save CheckResult
                               └─ step: verdict     → Claude over all results → save final verdict
@@ -149,7 +149,7 @@ export type Report = {
   reports.ts        startCheck (action), get (query), internal save mutations
   steps/
     comparison.ts   Apify calls
-    images.ts       pHash, Gemini, optional CLIP
+    images.ts       pHash, Claude vision, optional CLIP
     reviews.ts
     price.ts
     verdict.ts      Claude
@@ -167,7 +167,7 @@ README.md
 | **1. Extension** | WXT setup, Taobao content-script extraction, side panel UI, live subscription, loading/error states |
 | **2. Backend** | Convex schema, `startCheck` orchestration, caching, step status updates, error handling |
 | **3. Data** | Apify: find official product + comparable listings + official images; fallbacks when results are empty/slow |
-| **4. AI + story** | Gemini image comparison, Claude verdict prompt, demo script, video, pitch per track |
+| **4. AI + story** | Claude image-comparison and verdict prompts, demo script, video, pitch per track |
 
 Agree on `shared/types.ts` **first**; everyone builds against it.
 
@@ -177,14 +177,14 @@ Agree on `shared/types.ts` **first**; everyone builds against it.
 
 | Hours | Goal |
 |---|---|
-| 0–1 | All together: lock target user + site, confirm what Taobao shows to the extension, get API keys (Convex, Apify, Gemini, Claude), commit `shared/types.ts` |
+| 0–1 | All together: lock target user + site, confirm what Taobao shows to the extension, get API keys (Convex, Apify, Claude), commit `shared/types.ts` |
 | 1–5 | Parallel builds; each piece works standalone on a **real** listing |
 | 5–7 | Integrate end to end (extension → Convex → steps → live side panel) |
 | 7–9 | Build "the moment": a real misleading listing caught (e.g. buyer photos don't match seller photos, or seller photos stolen from the brand site). Make failures graceful |
 | 9–11 | Polish UI, record demo video, write submission + per-track blurbs |
 | 11–12 | Buffer. **No new features.** |
 
-**Cut order if behind:** CLIP → review heuristics depth → price check → Apify comparison breadth. Never cut: extraction, Gemini image check, Claude verdict, live side panel.
+**Cut order if behind:** CLIP → review heuristics depth → price check → Apify comparison breadth. Never cut: extraction, Claude image check, Claude verdict, live side panel.
 
 ---
 
@@ -233,7 +233,6 @@ Env vars (never commit values):
 ```
 CONVEX_DEPLOYMENT=
 APIFY_TOKEN=
-GEMINI_API_KEY=
 ANTHROPIC_API_KEY=
 HF_TOKEN=            # optional, CLIP
 ```
