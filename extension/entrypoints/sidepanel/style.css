@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+body {
+  @apply bg-white text-neutral-900;
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    @apply bg-neutral-950 text-neutral-100;
+  }
+}
