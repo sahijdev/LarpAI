@@ -86,46 +86,76 @@ export default function App() {
   }, [run]);
 
   return (
-    <main className="mx-auto max-w-md space-y-4 p-4 text-sm">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">LarpAI</h1>
+    <main className="mx-auto min-h-screen max-w-md text-sm">
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200/80 bg-white/90 px-4 py-3 backdrop-blur-md dark:border-neutral-800 dark:bg-neutral-950/90">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 text-xs font-semibold text-white dark:bg-white dark:text-neutral-950">
+            L
+          </span>
+          <div>
+            <h1 className="text-sm font-semibold leading-none tracking-tight">LarpAI</h1>
+            <p className="mt-1 text-[11px] text-neutral-500">Does this listing match?</p>
+          </div>
+        </div>
         {phase.kind === "report" && (
-          <button className="text-xs text-neutral-500 underline" onClick={() => run(true)}>
+          <button type="button" className={buttonClass} onClick={() => run(true)}>
             Re-check
           </button>
         )}
       </header>
-      {phase.kind === "idle" && <p className="text-neutral-500">Loading…</p>}
-      {phase.kind === "unsupported" && (
-        <p className="text-neutral-500">Open a Taobao, Tmall, Temu or Amazon product page to check whether the listing matches reality.</p>
-      )}
-      {phase.kind === "extracting" && <p className="text-neutral-500">Reading this listing…</p>}
-      {phase.kind === "error" && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-          <p>{phase.message}</p>
-          <button className="mt-2 underline" onClick={() => run()}>
-            Try again
-          </button>
-        </div>
-      )}
-      {phase.kind === "report" && <Report reportId={phase.reportId} cached={phase.cached} />}
+
+      <div className="space-y-4 px-4 py-4">
+        {phase.kind === "idle" && <StatusCard title="Opening the check" body="Looking at the tab you have open." />}
+        {phase.kind === "unsupported" && (
+          <StatusCard
+            title="No product page on this tab"
+            body="Open a Taobao, Tmall, Temu, or Amazon product page. The check runs on the listing you're already viewing."
+          />
+        )}
+        {phase.kind === "extracting" && <ReadingCard />}
+        {phase.kind === "error" && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
+            <p className="font-medium">Couldn't read this page</p>
+            <p className="mt-1 leading-relaxed">{phase.message}</p>
+            <button type="button" className={`${buttonClass} mt-3`} onClick={() => run()}>
+              Try again
+            </button>
+          </div>
+        )}
+        {phase.kind === "report" && <Report reportId={phase.reportId} cached={phase.cached} />}
+      </div>
     </main>
   );
 }
 
+const buttonClass =
+  "rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-neutral-800 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:focus-visible:outline-neutral-100";
+
 function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean }) {
   const report = useQuery(api.reports.get, { reportId });
-  if (report === undefined) return <p className="text-neutral-500">Connecting…</p>;
-  if (report === null) return <p className="text-red-700">Report not found.</p>;
+  if (report === undefined) return <StatusCard title="Connecting" body="Waiting for the report." />;
+  if (report === null) return <StatusCard title="Report not found" body="Run the check again from this listing." />;
 
+  const listing = report.listing as ListingInput;
   const checks = report.checks as Record<CheckName, CheckResult>;
+  const steps = CHECK_NAMES.filter((name) => name !== "verdict");
+
   return (
     <div className="space-y-4">
-      <VerdictCard verdict={report.verdict as Verdict | undefined} running={report.status === "running"} />
-      {cached && <p className="text-xs text-neutral-500">Showing a report from {new Date(report.createdAt).toLocaleString()}.</p>}
-      <PhotoCompare listing={report.listing as ListingInput} />
+      <ListingHeading listing={listing} />
+      {cached && (
+        <p className="rounded-xl bg-neutral-100 px-3 py-2 text-xs text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">
+          Saved {new Date(report.createdAt).toLocaleString()}. Re-check to run it again.
+        </p>
+      )}
+      <VerdictHero verdict={report.verdict as Verdict | undefined} running={report.status === "running"} />
+      <PhotoCompare listing={listing} />
+      <ScoreStrip checks={checks} steps={steps} />
+      {report.status === "running" && <CheckProgress checks={checks} steps={steps} />}
+      <VerdictDetails verdict={report.verdict as Verdict | undefined} />
       <section className="space-y-2">
-        {CHECK_NAMES.filter((n) => n !== "verdict").map((name) => (
+        <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Checks</h2>
+        {steps.map((name) => (
           <CheckCard key={name} check={checks[name]} />
         ))}
         {checks.verdict.status === "error" && <CheckCard check={checks.verdict} />}
@@ -134,66 +164,210 @@ function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean
   );
 }
 
-const LABEL_STYLE: Record<Verdict["label"], string> = {
-  "looks legit": "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200",
-  "some concerns": "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
-  "likely misleading": "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200",
-  "not enough data": "bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200",
+const TONE: Record<Verdict["label"], { ring: string; pill: string; bar: string }> = {
+  "looks legit": {
+    ring: "stroke-emerald-500",
+    pill: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+    bar: "bg-emerald-500",
+  },
+  "some concerns": {
+    ring: "stroke-amber-500",
+    pill: "bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+    bar: "bg-amber-500",
+  },
+  "likely misleading": {
+    ring: "stroke-red-500",
+    pill: "bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200",
+    bar: "bg-red-500",
+  },
+  "not enough data": {
+    ring: "stroke-neutral-400",
+    pill: "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200",
+    bar: "bg-neutral-400",
+  },
 };
 
-function VerdictCard({ verdict, running }: { verdict?: Verdict; running: boolean }) {
+const LABEL_COPY: Record<Verdict["label"], string> = {
+  "looks legit": "Looks legit",
+  "some concerns": "Some concerns",
+  "likely misleading": "Likely misleading",
+  "not enough data": "Not enough data",
+};
+
+function VerdictHero({ verdict, running }: { verdict?: Verdict; running: boolean }) {
   if (!verdict) {
     return (
-      <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-        <p className="text-neutral-500">{running ? "Checking the listing…" : "No verdict could be produced."}</p>
-      </div>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <p className="font-medium">{running ? "Checking this listing" : "No verdict yet"}</p>
+        <p className="mt-1 text-neutral-500">
+          {running ? "Scores will fill in as each check finishes." : "The verdict didn't finish. The checks below still show what we found."}
+        </p>
+      </section>
     );
   }
+
+  const tone = TONE[verdict.label];
   return (
-    <div className={`space-y-3 rounded-xl p-4 ${LABEL_STYLE[verdict.label]}`}>
-      <div className="flex items-baseline gap-3">
-        <span className="text-4xl font-bold tabular-nums">{verdict.score}</span>
-        <div>
-          <p className="font-semibold capitalize">{verdict.label}</p>
-          <p className="text-xs opacity-80">{verdict.confidence} confidence</p>
+    <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="flex items-center gap-4 p-4">
+        <ScoreRing score={verdict.score} ringClass={tone.ring} />
+        <div className="min-w-0">
+          <p className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${tone.pill}`}>{LABEL_COPY[verdict.label]}</p>
+          <p className="mt-1.5 text-xs capitalize text-neutral-500">{verdict.confidence} confidence</p>
         </div>
       </div>
-      <ul className="list-disc space-y-1 pl-5">
-        {verdict.reasons.map((r) => (
-          <li key={r}>{r}</li>
+      <div className="h-1 bg-neutral-100 dark:bg-neutral-800">
+        <div className={`h-full ${tone.bar}`} style={{ width: `${verdict.score}%` }} />
+      </div>
+    </section>
+  );
+}
+
+function VerdictDetails({ verdict }: { verdict?: Verdict }) {
+  if (!verdict) return null;
+  return (
+    <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+      <h2 className="border-b border-neutral-100 px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:border-neutral-800">
+        Why
+      </h2>
+      <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        {verdict.reasons.map((reason) => (
+          <li key={reason} className="px-4 py-3 leading-relaxed text-neutral-800 dark:text-neutral-200">
+            {reason}
+          </li>
         ))}
       </ul>
       {verdict.caveats.length > 0 && (
-        <div className="text-xs opacity-80">
-          <p className="font-medium">What we couldn't check</p>
-          <ul className="list-disc pl-5">
-            {verdict.caveats.map((c) => (
-              <li key={c}>{c}</li>
+        <div className="border-t border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-950">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">What we couldn't check</p>
+          <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+            {verdict.caveats.map((caveat) => (
+              <li key={caveat}>{caveat}</li>
             ))}
           </ul>
         </div>
       )}
+    </section>
+  );
+}
+
+function ScoreRing({ score, ringClass }: { score: number; ringClass: string }) {
+  const radius = 28;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (Math.min(100, Math.max(0, score)) / 100) * circumference;
+  return (
+    <div className="relative h-16 w-16 shrink-0" role="img" aria-label={`Match score ${score} out of 100`}>
+      <svg viewBox="0 0 72 72" className="h-16 w-16 -rotate-90">
+        <circle cx="36" cy="36" r={radius} fill="none" strokeWidth="6" className="stroke-neutral-200 dark:stroke-neutral-800" />
+        <circle
+          cx="36"
+          cy="36"
+          r={radius}
+          fill="none"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className={ringClass}
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-lg font-semibold tabular-nums">{score}</span>
+    </div>
+  );
+}
+
+function CheckProgress({ checks, steps }: { checks: Record<CheckName, CheckResult>; steps: CheckName[] }) {
+  const finished = steps.filter((name) => {
+    const status = checks[name]?.status;
+    return status === "done" || status === "error" || status === "skipped";
+  }).length;
+  const pct = Math.round((finished / steps.length) * 100);
+  return (
+    <div>
+      <div className="mb-1.5 flex justify-between text-[11px] text-neutral-500">
+        <span>Still running</span>
+        <span className="tabular-nums">
+          {finished}/{steps.length}
+        </span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+        <div className="h-full rounded-full bg-neutral-900 transition-all dark:bg-neutral-100" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+const STRIP_TITLES: Record<CheckName, string> = {
+  comparison: "Sources",
+  images: "Photos",
+  reviews: "Reviews",
+  price: "Price",
+  verdict: "Verdict",
+};
+
+function ScoreStrip({ checks, steps }: { checks: Record<CheckName, CheckResult>; steps: CheckName[] }) {
+  return (
+    <div className="grid grid-cols-4 gap-1.5">
+      {steps.map((name) => {
+        const check = checks[name];
+        const showScore = check?.score !== undefined && name !== "comparison";
+        return (
+          <div key={name} className="rounded-xl border border-neutral-200 px-2 py-2 dark:border-neutral-800">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">{STRIP_TITLES[name]}</p>
+            <p className="mt-0.5 text-sm font-semibold tabular-nums">
+              {showScore ? check.score : statusLabel(check?.status ?? "pending")}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ListingHeading({ listing }: { listing: ListingInput }) {
+  const price = formatPrice(listing.price);
+  return (
+    <div>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+        {siteLabel(listing)}
+        {price ? ` · ${price}` : ""}
+      </p>
+      <h2 className="mt-1 line-clamp-2 text-sm font-medium leading-snug">{listing.title}</h2>
     </div>
   );
 }
 
 function PhotoCompare({ listing }: { listing: ListingInput }) {
-  if (listing.buyerImages.length === 0) return null;
-  const row = (label: string, urls: string[]) => (
-    <div>
-      <p className="mb-1 text-xs font-medium text-neutral-500">{label}</p>
-      <div className="grid grid-cols-3 gap-1">
-        {urls.slice(0, 3).map((u) => (
-          <img key={u} src={u} alt={label} className="aspect-square w-full rounded object-cover" />
-        ))}
-      </div>
-    </div>
-  );
+  if (listing.sellerImages.length === 0 && listing.buyerImages.length === 0) return null;
   return (
-    <section className="space-y-2">
-      {row("Seller photos", listing.sellerImages)}
-      {row("Buyer photos", listing.buyerImages)}
+    <section className="space-y-3 rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
+      <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Photos</h2>
+      <PhotoRow label="Seller" urls={listing.sellerImages} />
+      <PhotoRow label="Buyer" urls={listing.buyerImages} />
     </section>
+  );
+}
+
+function PhotoRow({ label, urls }: { label: string; urls: string[] }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-medium">
+        {label}
+        <span className="ml-1.5 font-normal text-neutral-500">{urls.length === 0 ? "None on this page" : urls.length}</span>
+      </p>
+      {urls.length > 0 && (
+        <div className="photo-row flex gap-2 overflow-x-auto">
+          {urls.slice(0, 6).map((url, index) => (
+            <img
+              key={`${url}-${index}`}
+              src={url}
+              alt={`${label} photo ${index + 1}`}
+              className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-neutral-200 dark:ring-neutral-700"
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -205,37 +379,93 @@ const CHECK_TITLES: Record<CheckName, string> = {
   verdict: "Verdict",
 };
 
+const STATUS_DOT: Record<CheckResult["status"], string> = {
+  pending: "bg-neutral-300 dark:bg-neutral-600",
+  running: "animate-pulse bg-amber-400",
+  done: "bg-emerald-500",
+  error: "bg-red-500",
+  skipped: "bg-neutral-300 dark:bg-neutral-600",
+};
+
 function CheckCard({ check }: { check: CheckResult }) {
-  const icon = { pending: "○", running: "◌", done: "●", error: "✕", skipped: "–" }[check.status];
+  const showScore = check.score !== undefined && check.name !== "comparison";
   return (
-    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="flex items-center justify-between">
-        <p className="font-medium">
-          <span className={check.status === "running" ? "inline-block animate-spin" : ""}>{icon}</span>{" "}
+    <article className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="flex items-center gap-2 font-medium">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[check.status]}`} aria-hidden />
           {CHECK_TITLES[check.name]}
-        </p>
-        {check.score !== undefined && check.name !== "comparison" && (
-          <span className="tabular-nums text-neutral-500">{check.score}</span>
-        )}
+        </h3>
+        <span className="shrink-0 text-xs tabular-nums text-neutral-500">{showScore ? check.score : statusLabel(check.status)}</span>
       </div>
-      {check.summary && <p className="mt-1 text-neutral-700 dark:text-neutral-300">{check.summary}</p>}
-      {check.error && <p className="mt-1 text-red-700 dark:text-red-300">{check.error}</p>}
+      {check.summary && <p className="mt-2 leading-relaxed text-neutral-700 dark:text-neutral-300">{check.summary}</p>}
+      {check.error && <p className="mt-2 leading-relaxed text-red-700 dark:text-red-300">{check.error}</p>}
       {check.evidence && check.evidence.length > 0 && (
-        <ul className="mt-2 space-y-1 text-xs">
-          {check.evidence.slice(0, 4).map((e, i) => (
-            <li key={i} className="flex items-center gap-2">
-              {e.imageUrl && <img src={e.imageUrl} alt="" className="h-8 w-8 rounded object-cover" />}
-              {e.sourceUrl ? (
-                <a href={e.sourceUrl} target="_blank" rel="noreferrer" className="truncate underline">
-                  {e.label}
+        <ul className="mt-3 space-y-2">
+          {check.evidence.slice(0, 4).map((item, index) => (
+            <li key={index} className="flex items-center gap-2 text-xs">
+              {item.imageUrl && <img src={item.imageUrl} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover ring-1 ring-neutral-200 dark:ring-neutral-700" />}
+              {item.sourceUrl ? (
+                <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="truncate text-neutral-700 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-600 dark:text-neutral-300">
+                  {item.label}
                 </a>
               ) : (
-                <span className="truncate">{e.label}</span>
+                <span className="truncate text-neutral-600 dark:text-neutral-400">{item.label}</span>
               )}
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </article>
   );
+}
+
+function StatusCard({ title, body }: { title: string; body: string }) {
+  return (
+    <section className="rounded-2xl border border-neutral-200 p-4 dark:border-neutral-800">
+      <p className="font-medium">{title}</p>
+      <p className="mt-1 leading-relaxed text-neutral-500">{body}</p>
+    </section>
+  );
+}
+
+function ReadingCard() {
+  return (
+    <section className="rounded-2xl border border-neutral-200 p-4 dark:border-neutral-800">
+      <p className="font-medium">Reading this listing</p>
+      <p className="mt-1 text-neutral-500">Pulling the title, price, and photos from the page.</p>
+      <div className="mt-4 space-y-2">
+        <div className="h-3 w-3/4 animate-pulse rounded-full bg-neutral-200 dark:bg-neutral-800" />
+        <div className="h-3 w-1/2 animate-pulse rounded-full bg-neutral-200 dark:bg-neutral-800" />
+        <div className="h-16 animate-pulse rounded-xl bg-neutral-100 dark:bg-neutral-900" />
+      </div>
+    </section>
+  );
+}
+
+function siteLabel(listing: ListingInput): string {
+  const url = listing.url;
+  if (/amazon\./i.test(url)) return "Amazon";
+  if (/tmall\.com/i.test(url)) return "Tmall";
+  if (listing.site === "taobao" || /taobao\.com/i.test(url)) return "Taobao";
+  if (listing.site === "temu" || /temu\.com/i.test(url)) return "Temu";
+  if (listing.site === "aliexpress") return "AliExpress";
+  return "Listing";
+}
+
+function formatPrice(price: ListingInput["price"]): string | null {
+  if (!price) return null;
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: price.currency }).format(price.amount);
+  } catch {
+    return `${price.amount} ${price.currency}`;
+  }
+}
+
+function statusLabel(status: CheckResult["status"]): string {
+  if (status === "done") return "Done";
+  if (status === "running") return "Running";
+  if (status === "error") return "Failed";
+  if (status === "skipped") return "Skipped";
+  return "Waiting";
 }
