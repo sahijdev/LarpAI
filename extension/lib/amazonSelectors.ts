@@ -18,6 +18,19 @@ export const AMAZON_SELECTORS = {
   reviewDate: ['[data-hook="review-date"]'],
   reviewStars: ['[data-hook="review-star-rating"] .a-icon-alt', '[data-hook="cmps-review-star-rating"] .a-icon-alt'],
   reviewPhotos: ['img[data-hook="review-image-tile"]', ".review-image-tile", '[data-hook="reviewRichContentContainer"] img'],
+  // Buy box. NOTE: not yet checked against a live page; fallbacks cover the older and newer layouts.
+  soldBy: [
+    "#merchantInfoFeature_feature_div .offer-display-feature-text-message",
+    "#sellerProfileTriggerId",
+    "#merchant-info a",
+    "#merchant-info",
+  ],
+  shipsFrom: ["#fulfillerInfoFeature_feature_div .offer-display-feature-text-message"],
+  // Overall rating across all reviews (the page shows only a handful of the reviews themselves).
+  ratingAverage: ['[data-hook="rating-out-of-text"]', "#acrPopover .a-icon-alt", "#acrPopover"],
+  ratingCount: ['[data-hook="total-review-count"]', "#acrCustomerReviewText"],
+  histogramRows: ['#histogramTable [aria-label*="percent"]', '[aria-label*="percent of reviews"]'],
+  highlights: ['[data-hook="cr-insights-widget-summary"]', "#product-summary p", "#cr-product-insights-cards p"],
 } as const;
 
 // Reviewer avatars live in the same review cards; never collect them (README: no identifying data).

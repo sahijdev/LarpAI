@@ -40,29 +40,50 @@ export async function runPrice(listing: ListingInput, found?: ComparisonDetails)
   ).flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
   if (converted.length === 0) throw new Error("Couldn't convert comparable prices to the listing's currency");
 
-  const officialPrice = converted.find((c) => c.isOfficial)?.amount;
-  const reference = officialPrice ?? median(converted.map((c) => c.amount))!;
+  // Prefer what other retailers actually charge. The brand's own site usually shows the full list price,
+  // which marketplaces routinely undercut with ordinary sales, so it's only a fallback.
+  const street = converted.filter((c) => !c.isOfficial).map((c) => c.amount);
+  const listPrice = converted.find((c) => c.isOfficial)?.amount;
+  const reference = street.length > 0 ? median(street)! : listPrice!;
+  const referenceKind = street.length > 0 ? "typical retail" : "list";
   const ratio = listing.price.amount / reference;
   const pct = Math.round(ratio * 100);
   const fmt = (n: number) => `${n.toFixed(2)} ${target}`;
 
+  // Sold by the marketplace itself or the brand's own store: a low price is a sale, not bait.
+  const authorized = listing.seller?.kind === "marketplace" || listing.seller?.kind === "brand";
+  const soldBy = authorized ? ` Sold by ${listing.seller!.name}, so this is most likely a sale.` : "";
+
   let score: number;
   let summary: string;
   if (ratio < TOO_GOOD_RATIO) {
-    score = clamp(ratio * 100);
-    summary = `Price is only ${pct}% of the ${officialPrice ? "official" : "typical"} price (${fmt(reference)}): too good to be true`;
+    score = authorized ? 70 : clamp(ratio * 100);
+    summary = authorized
+      ? `Price is only ${pct}% of the ${referenceKind} price (${fmt(reference)}): unusually low.${soldBy}`
+      : `Price is only ${pct}% of the ${referenceKind} price (${fmt(reference)}): too good to be true`;
   } else if (ratio < 0.7) {
-    score = 60;
-    summary = `Price is ${pct}% of the ${officialPrice ? "official" : "typical"} price (${fmt(reference)}): cheaper than usual`;
+    score = authorized ? 85 : referenceKind === "list" ? 75 : 60;
+    summary =
+      referenceKind === "list"
+        ? `Price is ${pct}% of the brand's list price (${fmt(reference)}). Discounts this size are common.${soldBy}`
+        : `Price is ${pct}% of what other retailers charge (${fmt(reference)}): cheaper than usual.${soldBy}`;
   } else {
     score = 90;
-    summary = `Price is in line with comparables (${pct}% of ${fmt(reference)})`;
+    summary = `Price is in line with ${referenceKind === "list" ? "the brand's list price" : "other retailers"} (${pct}% of ${fmt(reference)})`;
   }
 
   return {
     score,
     summary,
-    details: { listingPrice: listing.price, reference, referenceKind: officialPrice ? "official" : "median", ratio, comparables: converted },
+    details: {
+      listingPrice: listing.price,
+      reference,
+      referenceKind,
+      streetPriceCount: street.length,
+      seller: listing.seller,
+      ratio,
+      comparables: converted,
+    },
     evidence: converted.slice(0, 3).map((c) => ({ label: `${c.title}: ${fmt(c.amount)}`, sourceUrl: c.url })),
   };
 }

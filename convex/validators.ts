@@ -13,6 +13,21 @@ export const listingInputV = v.object({
     v.object({ text: v.string(), rating: v.optional(v.number()), date: v.optional(v.string()) }),
   ),
   brandGuess: v.optional(v.string()),
+  seller: v.optional(
+    v.object({
+      name: v.string(),
+      kind: v.optional(v.union(v.literal("marketplace"), v.literal("brand"), v.literal("third-party"))),
+      shipsFrom: v.optional(v.string()),
+    }),
+  ),
+  ratingSummary: v.optional(
+    v.object({
+      average: v.optional(v.number()),
+      count: v.optional(v.number()),
+      distribution: v.optional(v.array(v.number())),
+      highlights: v.optional(v.string()),
+    }),
+  ),
 });
 
 export const checkNameV = v.union(

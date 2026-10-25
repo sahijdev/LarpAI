@@ -80,6 +80,30 @@ function meta(doc: Document, property: string): string | undefined {
   return doc.querySelector(`meta[property="${property}"], meta[name="${property}"]`)?.getAttribute("content") ?? undefined;
 }
 
+const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() || undefined;
+
+// "5,123 ratings" / "1.2K global ratings" → 5123 / 1200
+function parseCount(value: string | undefined): number | undefined {
+  const m = value?.replace(/,/g, "").match(/([\d.]+)\s*([KkMm万])?/);
+  if (!m) return undefined;
+  const mult = { k: 1e3, m: 1e6, 万: 1e4 }[m[2]?.toLowerCase() ?? ""] ?? 1;
+  const n = Math.round(Number(m[1]) * mult);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+// schema.org aggregateRating, published by many store pages.
+function jsonLdRating(product: JsonLdProduct | undefined): ListingInput["ratingSummary"] {
+  const r = (product as { aggregateRating?: { ratingValue?: unknown; reviewCount?: unknown; ratingCount?: unknown } })
+    ?.aggregateRating;
+  const average = Number(r?.ratingValue);
+  const count = Number(r?.ratingCount ?? r?.reviewCount);
+  if (!Number.isFinite(average) && !Number.isFinite(count)) return undefined;
+  return {
+    average: Number.isFinite(average) ? average : undefined,
+    count: Number.isFinite(count) ? count : undefined,
+  };
+}
+
 function extractTaobao(doc: Document): ListingInput {
   const url = doc.location.href;
   const reviews: Review[] = [];
@@ -103,7 +127,17 @@ function extractTaobao(doc: Document): ListingInput {
     buyerImages: [...new Set(buyerImages)],
     reviews,
     brandGuess: first(doc, SELECTORS.brand)?.textContent?.trim() || undefined,
+    seller: taobaoSeller(doc),
+    ratingSummary: jsonLdRating(jsonLdProduct(doc)),
   };
+}
+
+// Tmall flagship stores (旗舰店) are run by the brand; other shops are independent sellers.
+function taobaoSeller(doc: Document): ListingInput["seller"] {
+  const name = text(first(doc, SELECTORS.shopName));
+  if (!name) return undefined;
+  const flagship = doc.location.hostname === "detail.tmall.com" && /旗舰店|flagship/i.test(name);
+  return { name, kind: flagship ? "brand" : "third-party" };
 }
 
 function extractWorldTaobao(doc: Document): ListingInput {
@@ -201,6 +235,7 @@ function extractTemu(doc: Document): ListingInput {
     buyerImages: [...new Set(buyerImages.filter(Boolean))],
     reviews,
     brandGuess: brand?.trim() || undefined,
+    ratingSummary: jsonLdRating(product),
   };
 }
 
@@ -264,6 +299,49 @@ function extractAmazon(doc: Document): ListingInput {
     buyerImages: [...new Set(buyerImages)],
     reviews,
     brandGuess: brand || undefined,
+    seller: amazonSeller(doc, brand),
+    ratingSummary: amazonRatings(doc),
+  };
+}
+
+// "Sold by" in the buy box: Amazon itself, the brand's own storefront, or a third-party seller.
+function amazonSeller(doc: Document, brand: string | undefined): ListingInput["seller"] {
+  const S = AMAZON_SELECTORS;
+  const name = text(first(doc, S.soldBy))?.replace(/^Sold by:?\s*/i, "");
+  if (!name) return undefined;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const kind = /^amazon(\.com|\.co\.uk|\.ca)?\b/i.test(name)
+    ? "marketplace"
+    : brand && norm(brand).length > 2 && norm(name).includes(norm(brand))
+      ? "brand"
+      : "third-party";
+  return { name, kind, shipsFrom: text(first(doc, S.shipsFrom))?.replace(/^Ships from:?\s*/i, "") };
+}
+
+function amazonRatings(doc: Document): ListingInput["ratingSummary"] {
+  const S = AMAZON_SELECTORS;
+  const avgEl = first(doc, S.ratingAverage);
+  const average = Number((text(avgEl) ?? avgEl?.getAttribute("title") ?? "").match(/(\d(\.\d)?) out of 5/)?.[1]);
+  const count = parseCount(text(first(doc, S.ratingCount)));
+
+  // Each histogram row is labelled like "67 percent of reviews have 5 stars".
+  const distribution = [0, 0, 0, 0, 0];
+  let found = 0;
+  for (const el of all(doc, S.histogramRows)) {
+    const m = el.getAttribute("aria-label")?.match(/(\d+)\s*percent of reviews have (\d) star/i);
+    if (m && Number(m[2]) >= 1 && Number(m[2]) <= 5) {
+      distribution[5 - Number(m[2])] = Number(m[1]);
+      found++;
+    }
+  }
+
+  const highlights = text(first(doc, S.highlights));
+  if (!Number.isFinite(average) && !count && !found && !highlights) return undefined;
+  return {
+    average: Number.isFinite(average) ? average : undefined,
+    count,
+    distribution: found ? distribution : undefined,
+    highlights: highlights?.slice(0, 600),
   };
 }
 
