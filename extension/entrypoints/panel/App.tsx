@@ -4,34 +4,17 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { CheckName, CheckResult, ListingInput, Verdict } from "../../../shared/types";
 import { CHECK_NAMES, normalizeListingKey } from "../../../shared/listingKey";
-
-// Taobao/Tmall item pages, Temu product pages ("...-g-<id>.html" or "goods.html?goods_id="),
-// and Amazon product pages ("/dp/<ASIN>" or "/gp/product/<ASIN>").
-const SUPPORTED = new RegExp(
-  [
-    String.raw`^https?://(item\.taobao\.com|detail\.tmall\.com)/`,
-    String.raw`^https?://world\.taobao\.com/item/`,
-    String.raw`^https?://([a-z]+\.)?temu\.com/(.*-g-\d+\.html|goods\.html\?.*goods_id=)`,
-    String.raw`^https?://(www\.|smile\.)?amazon\.(com|co\.uk|ca)/(.*/)?(dp|gp/product)/[A-Z0-9]{10}`,
-  ].join("|"),
-);
+import { isSupportedListing, postToPage } from "../../lib/pageMessages";
 
 type ExtractResponse = { ok: true; listing: ListingInput } | { ok: false; error: string } | undefined;
 
-// Chrome only injects content scripts on page load, so a tab opened before the extension was
-// installed or reloaded (every dev rebuild) has none. Inject it on demand and ask again.
+// This page runs in a frame that the listing tab's content script created, so that script is
+// always there to answer.
 async function requestListing(tabId: number): Promise<ExtractResponse> {
-  const ask = () => browser.tabs.sendMessage(tabId, { type: "larpai:extract" }) as Promise<ExtractResponse>;
   try {
-    return await ask();
-  } catch (err) {
-    if (!/Receiving end does not exist|Could not establish connection/i.test(String(err))) throw err;
-    await browser.scripting.executeScript({ target: { tabId }, files: ["/content-scripts/content.js"] });
-    try {
-      return await ask();
-    } catch {
-      throw new Error("Couldn't read this page. Reload the tab and try again.");
-    }
+    return (await browser.tabs.sendMessage(tabId, { type: "larpai:extract" })) as ExtractResponse;
+  } catch {
+    throw new Error("Couldn't read this page. Reload the tab and try again.");
   }
 }
 
@@ -56,23 +39,31 @@ async function hasConsent(): Promise<boolean> {
   }
 }
 
+// The tab this drawer is embedded in. getCurrent() resolves it for a frame inside a tab;
+// the active-tab query is a fallback (the shopper just clicked the drawer open, so it's the active tab).
 async function activeListingTab() {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url || !SUPPORTED.test(tab.url)) return undefined;
+  const tab =
+    (await browser.tabs.getCurrent()) ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0];
+  if (!tab?.id || !tab.url || !isSupportedListing(tab.url)) return undefined;
   return { id: tab.id, url: tab.url, key: normalizeListingKey(tab.url) };
 }
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const startCheck = useMutation(api.reports.startCheck);
-  // Listings checked while this panel is open, so switching back to one shows its report again.
+  // Listings checked in this tab, so navigating back to one shows its report again.
   const checked = useRef(new Map<string, Id<"reports">>());
-  // The listing the panel is showing; tab events for the same listing leave the panel alone.
+  // The listing the drawer is showing; navigation events for the same listing leave it alone.
   const shownKey = useRef<string | undefined>(undefined);
   // In-memory copy of the agreement, so a check still runs if storage can't be written.
   const consented = useRef(false);
 
-  // Called on panel open, tab switch and navigation. Only looks at the tab URL; never sends anything.
+  // Keep the on-page button in sync when there's no report on screen.
+  useEffect(() => {
+    if (phase.kind !== "report") postToPage({ type: "larpai:status", state: "idle" });
+  }, [phase.kind]);
+
+  // Called when the drawer opens and when the tab navigates. Only looks at the tab URL; never sends anything.
   const refresh = useCallback(async () => {
     const tab = await activeListingTab();
     if (tab?.key === shownKey.current && shownKey.current !== undefined) return;
@@ -124,15 +115,20 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    const onActivated = () => refresh();
-    const onUpdated = (_id: number, info: { status?: string }, tab: { active?: boolean }) => {
-      if (tab.active && info.status === "complete") refresh();
+    // Sites like Amazon and Temu change listing (e.g. picking a variant) without reloading the page.
+    let ownTabId: number | undefined;
+    browser.tabs.getCurrent().then((tab) => (ownTabId = tab?.id));
+    const onUpdated = (tabId: number, info: { url?: string; status?: string }) => {
+      if (tabId === ownTabId && (info.url || info.status === "complete")) refresh();
     };
-    browser.tabs.onActivated.addListener(onActivated);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") postToPage({ type: "larpai:close" });
+    };
     browser.tabs.onUpdated.addListener(onUpdated);
+    window.addEventListener("keydown", onKey);
     return () => {
-      browser.tabs.onActivated.removeListener(onActivated);
       browser.tabs.onUpdated.removeListener(onUpdated);
+      window.removeEventListener("keydown", onKey);
     };
   }, [refresh]);
 
@@ -148,11 +144,21 @@ export default function App() {
             <p className="mt-1 text-[11px] text-neutral-500">Does this listing match?</p>
           </div>
         </div>
-        {phase.kind === "report" && (
-          <button type="button" className={buttonClass} onClick={() => run(true)}>
-            Re-check
+        <div className="flex items-center gap-2">
+          {phase.kind === "report" && (
+            <button type="button" className={buttonClass} onClick={() => run(true)}>
+              Re-check
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="Close LarpAI"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-lg leading-none text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+            onClick={() => postToPage({ type: "larpai:close" })}
+          >
+            ×
           </button>
-        )}
+        </div>
       </header>
 
       <div className="space-y-4 px-4 py-4">
@@ -230,6 +236,20 @@ function ConsentNotice({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
 
 function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean }) {
   const report = useQuery(api.reports.get, { reportId });
+  const score = (report?.verdict as Verdict | undefined)?.score;
+  const label = (report?.verdict as Verdict | undefined)?.label;
+  const running = report?.status === "running";
+
+  // Mirror the result onto the button on the listing page.
+  useEffect(() => {
+    if (report === undefined) return;
+    postToPage(
+      label !== undefined
+        ? { type: "larpai:status", state: "done", score, label }
+        : { type: "larpai:status", state: running ? "running" : "idle" },
+    );
+  }, [report === undefined, running, score, label]);
+
   if (report === undefined) return <StatusCard title="Connecting" body="Waiting for the report." />;
   if (report === null) return <StatusCard title="Report not found" body="Run the check again from this listing." />;
 
