@@ -18,7 +18,6 @@ A Chrome extension. When a user opens a product listing (starting with **Taobao*
 
 **Pitch framing (important):** "Does this listing match reality?" (misleading photos, stolen images, fake reviews, bait pricing). We do **not** pitch it as a replica/counterfeit quality checker.
 
-**Target user (fill in once decided):** e.g. "Berkeley international students buying from Taobao who've been burned by listings that didn't match." Keep it specific; the Anthropic judges want a named community.
 
 ---
 
