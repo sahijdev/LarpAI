@@ -26,7 +26,7 @@ const DRAWER_CSS = `
 const INLINE_CSS = `
 :host { all: initial; display: block; }
 .strip {
-  position: relative; overflow: hidden;
+  position: relative; overflow: hidden; container-type: inline-size;
   display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%;
   margin: 10px 0; padding: 10px 12px; border-radius: 12px;
   border: 1px solid #e5e5e5; border-left: 4px solid #d4d4d4; background: #fff; color: #171717;
@@ -41,7 +41,10 @@ const INLINE_CSS = `
   object-fit: contain; background: #fff;
 }
 .body { flex: 1; min-width: 0; }
-.headline { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+/* One line: the score/label never wraps; the step info gives way (with …) when space is short. */
+.headline { display: flex; align-items: baseline; gap: 6px; font-weight: 600; white-space: nowrap; min-width: 0; }
+.headline .dot { align-self: center; }
+.title { flex-shrink: 0; }
 .sub { margin-top: 2px; color: #525252; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dot { display: none; flex-shrink: 0; width: 8px; height: 8px; border-radius: 999px; }
 .strip[data-tone] .dot { display: block; }
@@ -58,7 +61,15 @@ const INLINE_CSS = `
 }
 .action:hover { background: #f5f5f5; }
 .action:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
-.steps { font-weight: 400; color: #737373; font-variant-numeric: tabular-nums; }
+/* Narrow columns (e.g. Amazon's center column on smaller windows): tighten spacing. */
+@container (max-width: 440px) {
+  .body { font-size: 12.5px; }
+  .action { padding: 4px 10px; }
+}
+.steps {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 400; font-size: 12px; color: #737373; font-variant-numeric: tabular-nums;
+}
 /* Progress along the bottom edge while a check runs. The sheen keeps it moving during long steps. */
 .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #f5f5f5; }
 .fill {
@@ -197,11 +208,11 @@ export function mountPageUi(ctx: ContentScriptContext): PageUi {
     } else if (running) {
       const p = status.progress;
       const secs = Math.round((Date.now() - (runStarted ?? Date.now())) / 1000);
-      const stepsText = p ? `${p.done} of ${p.total} steps · ${secs}s` : `${secs}s`;
+      const stepsText = p ? `${p.done}/${p.total} · ${secs}s` : `${secs}s`;
       if (status.label) {
         // Early verdict from photos and reviews; the final one replaces it.
         headline = status.label === "not enough data" ? LABELS[status.label] : `${status.score} · ${LABELS[status.label]}`;
-        stripSteps.textContent = `early result · ${stepsText}`;
+        stripSteps.textContent = `early · ${stepsText}`;
         stripSub.textContent = `${status.reason ? `${status.reason} ` : ""}Still checking: ${p?.current ?? "official product and price"}…`;
       } else {
         headline = "Checking";
