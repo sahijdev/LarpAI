@@ -57,7 +57,15 @@ export default function App() {
   // Keep the on-page button in sync when there's no report on screen.
   useEffect(() => {
     if (phase.kind !== "report") {
-      postToPage({ type: "larpai:status", state: phase.kind === "extracting" ? "running" : "idle" });
+      postToPage(
+        phase.kind === "extracting"
+          ? {
+              type: "larpai:status",
+              state: "running",
+              progress: { done: 0, total: CHECK_NAMES.length, current: "Reading the listing" },
+            }
+          : { type: "larpai:status", state: "idle" },
+      );
     }
   }, [phase.kind]);
 
@@ -245,22 +253,40 @@ function ConsentNotice({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
   );
 }
 
+// What each step is doing, in the shopper's words, for the progress line on the page.
+const STEP_COPY: Record<CheckName, string> = {
+  comparison: "Finding the official product",
+  images: "Comparing photos",
+  reviews: "Reading reviews",
+  price: "Checking the price",
+  verdict: "Writing the verdict",
+};
+
+function progressOf(checks: Record<CheckName, CheckResult>) {
+  const finished = (s?: CheckResult["status"]) => s === "done" || s === "error" || s === "skipped";
+  const done = CHECK_NAMES.filter((n) => finished(checks[n]?.status)).length;
+  const active = CHECK_NAMES.filter((n) => checks[n]?.status === "running").map((n) => STEP_COPY[n]);
+  return { done, total: CHECK_NAMES.length, current: active.length ? active.join(" · ") : "Starting" };
+}
+
 function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean }) {
   const report = useQuery(api.reports.get, { reportId });
   const score = (report?.verdict as Verdict | undefined)?.score;
   const label = (report?.verdict as Verdict | undefined)?.label;
   const reason = (report?.verdict as Verdict | undefined)?.reasons[0];
   const running = report?.status === "running";
+  const progress = report && running ? progressOf(report.checks as Record<CheckName, CheckResult>) : undefined;
+  const progressKey = JSON.stringify(progress);
 
-  // Mirror the result onto the listing page (floating button and inline summary).
+  // Mirror the result onto the listing page (inline summary).
   useEffect(() => {
     if (report === undefined) return;
     postToPage(
       label !== undefined
         ? { type: "larpai:status", state: "done", score, label, reason }
-        : { type: "larpai:status", state: running ? "running" : "idle" },
+        : { type: "larpai:status", state: running ? "running" : "idle", progress },
     );
-  }, [report === undefined, running, score, label, reason]);
+  }, [report === undefined, running, score, label, reason, progressKey]);
 
   if (report === undefined) return <StatusCard title="Connecting" body="Waiting for the report." />;
   if (report === null) return <StatusCard title="Report not found" body="Run the check again from this listing." />;
@@ -512,19 +538,27 @@ type ConvertedPrice = { url: string; amount: number };
 // that the comparison step found. Only real search results; shows nothing if there are none.
 function pickAlternative(checks: Record<CheckName, CheckResult>, currency?: string) {
   if (checks.comparison.status !== "done") return undefined;
+  // A price of 0 means the page didn't really list one (e.g. not for sale there), so treat it as missing.
+  const priced = (c: FoundListing) => !!c.price && c.price.amount > 0;
   const found = (checks.comparison.details?.comparables as FoundListing[] | undefined) ?? [];
   const pick = found
-    .filter((c) => c.isOfficial || c.price)
-    .sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial) || Number(!!b.price) - Number(!!a.price))[0];
+    .filter((c) => c.isOfficial || priced(c))
+    .sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial) || Number(priced(b)) - Number(priced(a)))[0];
   if (!pick) return undefined;
 
   // Prefer the price check's figure, already converted to the listing's currency.
   const converted =
     checks.price.status === "done"
-      ? (checks.price.details?.comparables as ConvertedPrice[] | undefined)?.find((c) => c.url === pick.url)
+      ? (checks.price.details?.comparables as ConvertedPrice[] | undefined)?.find(
+          (c) => c.url === pick.url && c.amount > 0,
+        )
       : undefined;
   const price =
-    converted && currency ? formatPrice({ amount: converted.amount, currency }) : formatPrice(pick.price);
+    converted && currency
+      ? formatPrice({ amount: converted.amount, currency })
+      : priced(pick)
+        ? formatPrice(pick.price)
+        : null;
   return { ...pick, price };
 }
 
@@ -549,7 +583,7 @@ function Alternative({ checks, listing }: { checks: Record<CheckName, CheckResul
           <p className="line-clamp-2 font-medium leading-snug underline decoration-neutral-300 underline-offset-2">{alt.title || host}</p>
           <p className="mt-1 text-xs text-neutral-500">
             {alt.isOfficial ? "Official brand site" : host}
-            {alt.price && ` · ${alt.price}`}
+            {alt.price ? ` · ${alt.price}` : " · no price listed"}
             {alt.price && listingPrice && ` (this listing ${listingPrice})`}
           </p>
         </div>

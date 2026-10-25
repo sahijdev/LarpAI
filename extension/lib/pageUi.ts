@@ -25,6 +25,7 @@ const DRAWER_CSS = `
 const INLINE_CSS = `
 :host { all: initial; display: block; }
 .strip {
+  position: relative; overflow: hidden;
   display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%;
   margin: 10px 0; padding: 10px 12px; border-radius: 12px;
   border: 1px solid #e5e5e5; border-left: 4px solid #d4d4d4; background: #fff; color: #171717;
@@ -56,6 +57,19 @@ const INLINE_CSS = `
 }
 .action:hover { background: #f5f5f5; }
 .action:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
+.steps { font-weight: 400; color: #737373; font-variant-numeric: tabular-nums; }
+/* Progress along the bottom edge while a check runs. The sheen keeps it moving during long steps. */
+.bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #f5f5f5; }
+.fill {
+  height: 100%; width: 0; background: #f59e0b; transition: width 0.6s ease;
+  background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  background-size: 60px 100%; background-repeat: no-repeat;
+  animation: sheen 1.4s linear infinite;
+}
+@keyframes sheen { from { background-position: -60px 0; } to { background-position: calc(100% + 60px) 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .fill, .strip[data-tone="running"] .dot { animation: none; }
+}
 `;
 
 const TONES: Record<string, string> = {
@@ -119,19 +133,26 @@ export function mountPageUi(): PageUi {
     <div class="strip" role="region" aria-label="LarpAI listing check">
       <span class="logo">L</span>
       <div class="body">
-        <div class="headline"><span class="dot"></span><span class="title"></span></div>
-        <div class="sub"></div>
+        <div class="headline"><span class="dot"></span><span class="title"></span><span class="steps"></span></div>
+        <div class="sub" aria-live="polite"></div>
       </div>
       <button class="action" type="button"></button>
+      <div class="bar" role="progressbar" aria-label="Check progress" aria-valuemin="0" hidden><div class="fill"></div></div>
     </div>`;
   const strip = inline.querySelector<HTMLDivElement>(".strip")!;
   const stripTitle = inline.querySelector<HTMLSpanElement>(".title")!;
+  const stripSteps = inline.querySelector<HTMLSpanElement>(".steps")!;
   const stripSub = inline.querySelector<HTMLDivElement>(".sub")!;
   const stripAction = inline.querySelector<HTMLButtonElement>(".action")!;
+  const bar = inline.querySelector<HTMLDivElement>(".bar")!;
+  const fill = inline.querySelector<HTMLDivElement>(".fill")!;
 
   let frame: HTMLIFrameElement | undefined;
   let isListing = false;
   let status: FrameStatus = { state: "idle" };
+  // Elapsed-time counter while a check runs, so long steps (web search) still visibly tick.
+  let runStarted: number | undefined;
+  let ticker: number | undefined;
 
   const isOpen = () => !drawer.hidden;
 
@@ -141,14 +162,32 @@ export function mountPageUi(): PageUi {
     if (tone) strip.dataset.tone = tone;
     else delete strip.dataset.tone;
 
+    const running = status.state === "running";
+    if (running && runStarted === undefined) {
+      runStarted = Date.now();
+      ticker = window.setInterval(render, 1000);
+    } else if (!running && runStarted !== undefined) {
+      runStarted = undefined;
+      window.clearInterval(ticker);
+    }
+
     let headline: string;
+    stripSteps.textContent = "";
+    bar.hidden = !running;
     if (status.state === "done" && status.label) {
       headline = status.label === "not enough data" ? LABELS[status.label] : `${status.score} · ${LABELS[status.label]}`;
       stripSub.textContent = status.reason ?? "";
       stripAction.textContent = "See full report";
-    } else if (status.state === "running") {
-      headline = "Checking…";
-      stripSub.textContent = "Comparing photos, reviews and price. Results appear here.";
+    } else if (running) {
+      const p = status.progress;
+      const secs = Math.round((Date.now() - (runStarted ?? Date.now())) / 1000);
+      headline = "Checking";
+      stripSteps.textContent = p ? `${p.done} of ${p.total} steps · ${secs}s` : `${secs}s`;
+      stripSub.textContent = p ? `${p.current}…` : "Starting…";
+      // Count a step in progress as half done so the bar moves as soon as work starts.
+      const pct = p ? Math.max(4, Math.min(100, ((p.done + (p.current !== "Starting" ? 0.5 : 0)) / p.total) * 100)) : 4;
+      fill.style.width = `${pct}%`;
+      bar.setAttribute("aria-valuenow", String(Math.round(pct)));
       stripAction.textContent = "Open report";
     } else {
       headline = "Check listing";

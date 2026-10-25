@@ -35,6 +35,8 @@ export type FrameStatus = {
   score?: number;
   label?: Verdict["label"];
   reason?: string; // the verdict's first reason, for the inline summary
+  // While running: how many steps have finished and what's happening now.
+  progress?: { done: number; total: number; current: string };
 };
 export type FrameMessage = { type: "larpai:close" } | ({ type: "larpai:status" } & FrameStatus);
 
