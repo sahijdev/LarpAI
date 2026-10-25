@@ -464,7 +464,37 @@ function ListingHeading({ listing }: { listing: ListingInput }) {
         {price ? ` · ${price}` : ""}
       </p>
       <h2 className="mt-1 line-clamp-2 text-sm font-medium leading-snug">{listing.title}</h2>
+      <SellerLine listing={listing} />
     </div>
+  );
+}
+
+const SELLER_KIND: Record<NonNullable<NonNullable<ListingInput["seller"]>["kind"]>, string> = {
+  marketplace: "the marketplace itself",
+  brand: "the brand's own store",
+  "third-party": "third-party seller",
+};
+
+function SellerLine({ listing }: { listing: ListingInput }) {
+  const { seller, ratingSummary: r } = listing;
+  const rating =
+    r?.average !== undefined
+      ? `★ ${r.average}${r.count !== undefined ? ` (${r.count.toLocaleString()} ratings)` : ""}`
+      : r?.count !== undefined
+        ? `${r.count.toLocaleString()} ratings`
+        : undefined;
+  if (!seller && !rating) return null;
+  return (
+    <p className="mt-1.5 text-xs text-neutral-500">
+      {seller && (
+        <>
+          Sold by <span className="font-medium text-neutral-700 dark:text-neutral-300">{seller.name}</span>
+          {seller.kind && ` · ${SELLER_KIND[seller.kind]}`}
+        </>
+      )}
+      {seller && rating && " · "}
+      {rating}
+    </p>
   );
 }
 

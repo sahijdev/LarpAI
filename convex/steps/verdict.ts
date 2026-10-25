@@ -24,6 +24,9 @@ Rules:
 - caveats must name every check that errored or was skipped, plus any real limits on what the evidence shows (for example: reused official photos are normal for authorised resellers).
 - If the image check is missing, or fewer than two checks produced results, use label "not enough data" and confidence "low" rather than guessing.
 - Lower confidence when checks are missing or disagree.
+- Seller: if the listing is sold by the marketplace itself (e.g. "Amazon.com") or the brand's own store, a price below the brand's list price is most likely a sale, not bait, and photos matching the brand's own are expected. An unknown third-party seller deserves more caution.
+- Rating summary: it covers every buyer, not just the few reviews shown on the page. A high average from thousands of ratings is strong evidence that buyers generally get what's shown. A low average or ratings split between 5 and 1 stars is a concern.
+- Photo evidence can be uncertain: buyer photos may show another color or version sold on the same page, may be few, or may be unclear. When the photo check lists uncertainties, lower confidence rather than the score, and don't call a listing misleading on uncertain photo evidence alone, especially when the seller and ratings look solid.
 - We judge whether the listing is honest about the product. We do not judge whether it is counterfeit, so don't call anything fake or a replica.
 - Write plainly for a shopper, with no jargon.`;
 
@@ -42,6 +45,8 @@ export async function runVerdict(
       sellerPhotoCount: listing.sellerImages.length,
       buyerPhotoCount: listing.buyerImages.length,
       visibleReviewCount: listing.reviews.length,
+      seller: listing.seller ?? "not shown on the page",
+      ratingSummary: listing.ratingSummary ?? "not shown on the page",
     },
     checks: Object.values(checks).map(({ name, status, score, summary, details, error }) => ({
       name,

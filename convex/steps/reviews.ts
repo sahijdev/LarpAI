@@ -41,6 +41,27 @@ function similarity(a: string, b: string): number {
   return inter / (ga.size + gb.size - inter);
 }
 
+// Flags from the site's summary of all ratings (most reviews aren't on the product page).
+function summaryFlags(s: NonNullable<ListingInput["ratingSummary"]>): Flag[] {
+  const flags: Flag[] = [];
+  if (s.average !== undefined && s.average < 3.5 && (s.count ?? 0) >= 20) {
+    flags.push({ kind: "low-average", detail: `average rating is only ${s.average} out of 5`, weight: 25 });
+  }
+  const [five, , , , one] = s.distribution ?? [];
+  // Lots of 5s and lots of 1s with little in between is a common sign of padded ratings.
+  if (five !== undefined && one !== undefined && five >= 55 && one >= 15) {
+    flags.push({ kind: "polarized", detail: `ratings are split between 5 stars (${five}%) and 1 star (${one}%)`, weight: 15 });
+  }
+  return flags;
+}
+
+function describeSummary(s: ListingInput["ratingSummary"]): string {
+  if (!s || (s.average === undefined && s.count === undefined)) return "";
+  const avg = s.average !== undefined ? `${s.average}★` : "Rated";
+  const count = s.count !== undefined ? ` from ${s.count.toLocaleString("en-US")} ratings` : "";
+  return `${avg}${count}. `;
+}
+
 export async function runReviews(listing: ListingInput): Promise<StepOutput> {
   const nonEmpty = listing.reviews.filter((r) => r.text.trim().length > 0);
   const reviews = nonEmpty.filter((r) => !isSystemReview(r.text));
@@ -48,16 +69,32 @@ export async function runReviews(listing: ListingInput): Promise<StepOutput> {
   const defaultsNote = systemDefaults
     ? ` (${systemDefaults} automatic "default" reviews from the marketplace ignored)`
     : "";
+  const ratingSummary = listing.ratingSummary;
+  const overall = describeSummary(ratingSummary);
+  const hasSummary = overall.length > 0 || !!ratingSummary?.distribution;
+
   if (reviews.length < 3) {
+    if (!hasSummary) {
+      return {
+        status: "skipped",
+        summary: `Only ${reviews.length} buyer-written review${reviews.length === 1 ? "" : "s"} visible, too few to judge${defaultsNote}`,
+        details: { analyzed: reviews.length, systemDefaults },
+      };
+    }
+    // Too few review texts, but the site's overall rating summary is still evidence.
+    const flags = summaryFlags(ratingSummary!);
     return {
-      status: "skipped",
-      summary: `Only ${reviews.length} buyer-written review${reviews.length === 1 ? "" : "s"} visible, too few to judge${defaultsNote}`,
-      details: { analyzed: reviews.length, systemDefaults },
+      score: clamp(100 - flags.reduce((sum, f) => sum + f.weight, 0)),
+      summary:
+        overall +
+        (flags.length ? `Concerns: ${flags.map((f) => f.detail).join("; ")}` : "No warning signs in the overall ratings") +
+        `. Only ${reviews.length} review text${reviews.length === 1 ? "" : "s"} visible to check${defaultsNote}.`,
+      details: { analyzed: reviews.length, systemDefaults, ratingSummary, flags },
     };
   }
 
   const texts = reviews.map((r) => normalize(r.text));
-  const flags: Flag[] = [];
+  const flags: Flag[] = ratingSummary ? summaryFlags(ratingSummary) : [];
 
   // Near-duplicate texts (copy-paste or templated reviews).
   let dupPairs = 0;
@@ -97,9 +134,11 @@ export async function runReviews(listing: ListingInput): Promise<StepOutput> {
   return {
     score,
     summary:
+      overall +
       (flags.length
         ? `Suspicious review patterns: ${flags.map((f) => f.detail).join("; ")}`
-        : `No suspicious patterns across ${reviews.length} visible reviews`) + defaultsNote,
-    details: { analyzed: reviews.length, systemDefaults, flags },
+        : `No suspicious patterns in the ${reviews.length} reviews shown on the page`) +
+      defaultsNote,
+    details: { analyzed: reviews.length, systemDefaults, ratingSummary, flags },
   };
 }

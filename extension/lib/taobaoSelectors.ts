@@ -18,6 +18,7 @@ export const SELECTORS = {
   reviewDate: ['[class*="meta--"]', '[class*="Comment--meta"]', ".tm-rate-date"],
   reviewStars: ['[class*="starWrapper--"] [class*="active"]'],
   brand: ['[class*="BasicAttributes--"] [class*="brand"]', '[class*="brandName"]'],
+  shopName: ['[class*="shopName--"]', '[class*="ShopHeader--title"]', ".tb-shop-name", ".slogo-shopname"],
 } as const;
 
 // world.taobao.com (Taobao's international site, /item/<encoded id>.htm). Checked against a live page (Oct 2026).

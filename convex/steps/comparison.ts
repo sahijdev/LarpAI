@@ -27,6 +27,9 @@ export type ComparisonDetails = {
 // Marketplaces that host the same kind of listing we're checking; skip them as "reference".
 const MARKETPLACE_HOSTS = /taobao|tmall|1688\.com|aliexpress|temu|alibaba|dhgate|pinduoduo|jd\.com/i;
 const MAX_PAGES = 5;
+// Titles of bot-check / error pages that sites serve to scrapers instead of the real page.
+const BLOCK_PAGE =
+  /robot or human|are you (a )?human|access denied|just a moment|attention required|captcha|verify you are|page not found|^\s*(403|404)\b/i;
 
 const SearchPlan = z.object({
   englishQuery: z.string(),
@@ -166,7 +169,8 @@ export async function runComparison(listing: ListingInput): Promise<StepOutput> 
     !!brandSlug && brandSlug.length > 2 && (hostOf(url) ?? "").replace(/[^a-z0-9]/g, "").includes(brandSlug);
 
   const urls = results.slice(0, MAX_PAGES).map((r) => r.url!);
-  const pages = await scrapePages(apify, urls);
+  // Re-check after scraping: a result can redirect to the listing's own site or to a bot check.
+  const pages = (await scrapePages(apify, urls)).filter((p) => isReference(p.url) && !BLOCK_PAGE.test(p.title ?? ""));
   if (pages.length === 0) {
     throw new Error(`Found ${urls.length} search results for "${query}", but every page blocked the scraper or failed to load`);
   }
@@ -194,8 +198,8 @@ export async function runComparison(listing: ListingInput): Promise<StepOutput> 
     // Not a trust score on its own; it measures how much reference data we found.
     score: Math.min(100, comparables.length * 15 + (official ? 25 : 0)),
     summary: official
-      ? `Found the official ${brand} page and ${comparables.length - 1} other public listings`
-      : `Found ${comparables.length} public listings for "${query}" (no official brand page)`,
+      ? `Found the official ${brand} page and ${comparables.length - 1} other public page${comparables.length === 2 ? "" : "s"}`
+      : `Found ${comparables.length} public page${comparables.length === 1 ? "" : "s"} for "${query}" (no official brand page)`,
     details,
     evidence: comparables.map((c) => ({
       label: c.isOfficial ? `Official: ${c.title}` : c.title,

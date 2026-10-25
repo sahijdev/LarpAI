@@ -47,7 +47,10 @@ async function findReusedPhotos(seller: Img[], official: Img[]) {
 
 const ImageComparison = z.object({
   matchScore: z.number().describe("0-100, how well seller photos represent what buyers received"),
-  mismatches: z.array(z.string()),
+  mismatches: z.array(z.string()).describe("Differences in the product itself that you are confident about"),
+  uncertainties: z
+    .array(z.string())
+    .describe("Things you couldn't judge, e.g. a buyer photo that may show a different variant or is unclear"),
   explanation: z.string(),
 });
 
@@ -70,9 +73,14 @@ async function compareWithClaude(groups: Record<Group, Img[]>, title: string) {
       `Product listing: "${title}".\n` +
       "Compare the photo groups above. SELLER photos are the listing's marketing images. " +
       "BUYER photos are what customers posted in reviews. OFFICIAL photos come from the brand or reputable retailers. " +
-      "Judge whether the seller photos honestly represent the product buyers actually received: color, material, " +
-      "shape, size, logo, finish, details. Ignore lighting and photo quality. If a group is missing, say so and judge " +
-      "only what you can. List concrete mismatches.",
+      "Judge whether the seller photos honestly represent the product buyers actually received: model, design, " +
+      "shape, materials, logo, finish, build quality, included parts. Ignore lighting and photo quality.\n\n" +
+      "Important: many listings sell several colors, sizes or versions on one page and share reviews across them, " +
+      "so buyer photos may show a different color, size or pack count than the seller photos. Do not count those " +
+      "differences as mismatches. Only list a mismatch when you're confident the product itself differs. If you " +
+      "can't tell whether a buyer photo shows the same model (small, blurry, partial, or possibly another variant), " +
+      "put it under uncertainties instead, and don't lower matchScore for it.\n\n" +
+      "If a group is missing, say so and judge only what you can.",
   });
 
   const res = await client.messages.parse({
@@ -116,6 +124,7 @@ export async function runImages(listing: ListingInput, found?: ComparisonDetails
     details: {
       explanation: vision.explanation,
       mismatches: vision.mismatches,
+      uncertainties: vision.uncertainties,
       reusedOfficialPhotos: reused,
       compared: { seller: seller.length, buyer: buyer.length, official: official.length },
       gaps,

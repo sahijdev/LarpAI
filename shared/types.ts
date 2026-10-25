@@ -9,6 +9,19 @@ export type ListingInput = {
   buyerImages: string[];       // review photo URLs visible on the page (may be empty)
   reviews: { text: string; rating?: number; date?: string }[]; // NO usernames
   brandGuess?: string;
+  // Who sells it, as shown on the page. A business/store name, never a person.
+  seller?: {
+    name: string;              // e.g. "Amazon.com", "JBL Store", a Taobao shop name
+    kind?: "marketplace" | "brand" | "third-party"; // sold by the platform itself / the brand's own store / anyone else
+    shipsFrom?: string;
+  };
+  // The site's summary of ALL ratings (most reviews aren't on the product page).
+  ratingSummary?: {
+    average?: number;          // out of 5
+    count?: number;            // total ratings
+    distribution?: number[];   // % of ratings at [5, 4, 3, 2, 1] stars
+    highlights?: string;       // the site's own review summary (e.g. Amazon "Customers say")
+  };
 };
 
 export type CheckName = "comparison" | "images" | "reviews" | "price" | "verdict";
