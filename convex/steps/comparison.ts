@@ -179,7 +179,8 @@ export async function runComparison(listing: ListingInput): Promise<StepOutput> 
     title: p.title,
     isOfficial: isOfficial(p.url),
     images: p.images ?? [],
-    price: p.price !== undefined ? { amount: p.price, currency: p.currency ?? "USD" } : undefined,
+    // Pages for products that aren't on sale often publish a price of 0; that's "no price", not free.
+    price: p.price !== undefined && p.price > 0 ? { amount: p.price, currency: p.currency ?? "USD" } : undefined,
   }));
 
   const officialImages = comparables.filter((c) => c.isOfficial).flatMap((c) => c.images);
