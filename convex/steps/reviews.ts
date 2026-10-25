@@ -78,7 +78,8 @@ export async function runReviews(listing: ListingInput): Promise<StepOutput> {
       return {
         status: "skipped",
         summary: `Only ${reviews.length} buyer-written review${reviews.length === 1 ? "" : "s"} visible, too few to judge${defaultsNote}`,
-        details: { analyzed: reviews.length, systemDefaults },
+        // notApplicable: nothing to judge, so the verdict leaves this check out instead of counting it as missing.
+        details: { analyzed: reviews.length, systemDefaults, notApplicable: true },
       };
     }
     // Too few review texts, but the site's overall rating summary is still evidence.

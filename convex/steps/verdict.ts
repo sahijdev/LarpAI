@@ -18,6 +18,8 @@ const SYSTEM = `You write the final verdict for LarpAI, a browser extension that
 
 You receive the listing and the results of automated checks. Each check has a status. "error" or "skipped" means that check gave you no information. Treat it as missing, not as good or bad news.
 
+Some checks may be absent from the list entirely. That means the page had nothing for them to judge (for example no reviews or no comparable prices). Absent evidence is neutral: never lower the score, the label or the confidence because reviews, ratings or prices are absent, and don't mention them. Base the score only on the checks you were given.
+
 Rules:
 - score is 0-100, where higher means the listing matches reality better.
 - Every reason must point to a specific check result (for example "Buyer photos show a darker color than the seller photos (image check)"). Give 1-2 reasons, one short sentence each (under 20 words), most important first.
@@ -30,6 +32,12 @@ Rules:
 - We judge whether the listing is honest about the product. We do not judge whether it is counterfeit, so don't call anything fake or a replica.
 - Write plainly for a shopper, with no jargon.`;
 
+// A check skipped because the page had nothing for it to judge (no comparable prices, no reviews).
+// It's left out of the verdict entirely: not sent to the model, not counted as missing.
+function isNotApplicable(c: CheckResult): boolean {
+  return c.status === "skipped" && (c.details as { notApplicable?: boolean } | undefined)?.notApplicable === true;
+}
+
 export async function runVerdict(
   listing: ListingInput,
   checks: Record<Exclude<CheckName, "verdict">, CheckResult>,
@@ -37,18 +45,23 @@ export async function runVerdict(
   const client = new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY") });
 
   // Send the model only what it needs; image bytes stay out (the image check already summarised them).
+  // When the price or review check had no data, also leave out the listing facts that would reveal the gap
+  // ("0 reviews", "no rating summary"), so the model can't count that absence against the listing.
+  const reviewsApply = !isNotApplicable(checks.reviews);
+  const priceApplies = !isNotApplicable(checks.price);
   const payload = {
     listing: {
       title: listing.title,
       site: listing.site,
-      price: listing.price,
+      ...(priceApplies ? { price: listing.price } : {}),
       sellerPhotoCount: listing.sellerImages.length,
       buyerPhotoCount: listing.buyerImages.length,
-      visibleReviewCount: listing.reviews.length,
+      ...(reviewsApply
+        ? { visibleReviewCount: listing.reviews.length, ratingSummary: listing.ratingSummary ?? "not shown on the page" }
+        : {}),
       seller: listing.seller ?? "not shown on the page",
-      ratingSummary: listing.ratingSummary ?? "not shown on the page",
     },
-    checks: Object.values(checks).map(({ name, status, score, summary, details, error }) => ({
+    checks: Object.values(checks).filter((c) => !isNotApplicable(c)).map(({ name, status, score, summary, details, error }) => ({
       name,
       status,
       score,
@@ -73,7 +86,9 @@ export async function runVerdict(
 
 // The model is instructed on these rules; enforce them in code too so a bad output can't overclaim.
 function enforceRules(v: Verdict, checks: Record<string, CheckResult>): Verdict {
-  const missing = Object.values(checks).filter((c) => c.status === "error" || c.status === "skipped");
+  const missing = Object.values(checks).filter(
+    (c) => (c.status === "error" || c.status === "skipped") && !isNotApplicable(c),
+  );
   const verdict: Verdict = {
     ...v,
     score: clamp(v.score),
