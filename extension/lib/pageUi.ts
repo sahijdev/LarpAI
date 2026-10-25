@@ -1,5 +1,6 @@
 import { AUTOSTART_PARAM, hasConsent, type FrameMessage, type FrameStatus, type StartMessage } from "./pageMessages";
 import { SELECTORS, WORLD_SELECTORS } from "./taobaoSelectors";
+import type { ContentScriptContext } from "wxt/utils/content-script-context";
 
 const ROOT_ID = "larpai-root";
 const INLINE_ID = "larpai-inline";
@@ -109,14 +110,28 @@ function findTitle(): Element | null {
 
 export type PageUi = { toggle(): void; setListingPage(isListing: boolean): void };
 
-export function mountPageUi(): PageUi {
-  // A previous copy of this script (from before the extension reloaded) can't talk to the extension anymore.
-  document.getElementById(ROOT_ID)?.remove();
-  document.getElementById(INLINE_ID)?.remove();
+// Copies of this script from before the extension reloaded keep running on the page (Chrome only cuts them
+// off from the extension), so their strips and drawers can linger. Only the newest copy's UI stays visible;
+// every copy applies the same rule, so they agree. Hiding rather than removing matters: an old copy
+// re-inserts a removed strip, and then the copies fight over the spot.
+const MOUNTED_ATTR = "data-larpai-mounted";
+function hideStaleCopies() {
+  const els = Array.from(document.querySelectorAll<HTMLElement>(`[id="${ROOT_ID}"], [id="${INLINE_ID}"]`));
+  const mountedAt = (el: HTMLElement) => Number(el.getAttribute(MOUNTED_ATTR) ?? 0);
+  const newest = Math.max(0, ...els.map(mountedAt));
+  for (const el of els) {
+    if (mountedAt(el) < newest) el.style.setProperty("display", "none", "important");
+  }
+}
+
+export function mountPageUi(ctx: ContentScriptContext): PageUi {
+  // Later copies get a larger value (the fraction just breaks same-millisecond ties).
+  const mountedAt = String(Date.now() + Math.random());
 
   // Drawer with the full report.
   const host = document.createElement("div");
   host.id = ROOT_ID;
+  host.setAttribute(MOUNTED_ATTR, mountedAt);
   const shadow = host.attachShadow({ mode: "closed" });
   shadow.innerHTML = `
     <style>${DRAWER_CSS}</style>
@@ -127,6 +142,7 @@ export function mountPageUi(): PageUi {
   // Inline summary (inserted into the page next to the title when we can find it).
   const inlineHost = document.createElement("div");
   inlineHost.id = INLINE_ID;
+  inlineHost.setAttribute(MOUNTED_ATTR, mountedAt);
   const inline = inlineHost.attachShadow({ mode: "closed" });
   inline.innerHTML = `
     <style>${INLINE_CSS}</style>
@@ -200,25 +216,35 @@ export function mountPageUi(): PageUi {
   // Keeps the summary under the title. Taobao re-renders parts of the page (e.g. picking a variant),
   // which can remove it, and the title may load after this script runs.
   const placeInline = () => {
+    if (ctx.isInvalid) return;
     const title = isListing ? findTitle() : null;
     if (!title) {
       if (inlineHost.isConnected) inlineHost.remove();
-    } else if (title.nextElementSibling !== inlineHost) {
+    } else if (!inlineHost.isConnected || inlineHost.parentElement !== title.parentElement) {
+      // Only (re)insert when the strip is gone or the title was re-rendered elsewhere. Don't insist on being
+      // the title's very next sibling: other page scripts may insert there too, and insisting causes a loop.
       title.insertAdjacentElement("afterend", inlineHost);
     }
+    hideStaleCopies();
     render();
   };
   let placeTimer: number | undefined;
   const schedulePlace = () => {
     if (placeTimer !== undefined) return;
-    placeTimer = window.setTimeout(() => {
+    placeTimer = ctx.setTimeout(() => {
       placeTimer = undefined;
       placeInline();
     }, 300);
   };
-  new MutationObserver(schedulePlace).observe(document.body ?? document.documentElement, {
-    childList: true,
-    subtree: true,
+  const observer = new MutationObserver(schedulePlace);
+  observer.observe(document.body ?? document.documentElement, { childList: true, subtree: true });
+
+  // When the extension reloads or updates, this copy stops for good and takes its UI with it.
+  ctx.onInvalidated(() => {
+    observer.disconnect();
+    window.clearInterval(ticker);
+    host.remove();
+    inlineHost.remove();
   });
 
   // The report frame holds the backend connection, so it's created only when the shopper clicks.
@@ -261,7 +287,7 @@ export function mountPageUi(): PageUi {
     }
   });
 
-  window.addEventListener("message", (event) => {
+  ctx.addEventListener(window, "message", (event: MessageEvent) => {
     // Only trust messages from our own frame; the shopping site can post messages too.
     if (!frame || event.source !== frame.contentWindow) return;
     const msg = event.data as FrameMessage;

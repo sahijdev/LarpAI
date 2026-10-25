@@ -15,7 +15,7 @@ export default defineContentScript({
     "*://*.amazon.ca/*",
   ],
   main(ctx) {
-    const ui = mountPageUi();
+    const ui = mountPageUi(ctx);
 
     // Show the button only on product pages; Amazon and Temu navigate without full reloads.
     const sync = () => ui.setListingPage(isSupportedListing(location.href));
