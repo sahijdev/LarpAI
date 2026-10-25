@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { CheckName, CheckResult, ListingInput, Verdict } from "../../../shared/types";
-import { CHECK_NAMES } from "../../../shared/listingKey";
+import { CHECK_NAMES, normalizeListingKey } from "../../../shared/listingKey";
 
 // Taobao/Tmall item pages, Temu product pages ("...-g-<id>.html" or "goods.html?goods_id="),
 // and Amazon product pages ("/dp/<ASIN>" or "/gp/product/<ASIN>").
@@ -38,21 +38,58 @@ async function requestListing(tabId: number): Promise<ExtractResponse> {
 type Phase =
   | { kind: "idle" }
   | { kind: "unsupported" }
+  | { kind: "ready" }
+  | { kind: "consent" }
   | { kind: "extracting" }
   | { kind: "error"; message: string }
   | { kind: "report"; reportId: Id<"reports">; cached: boolean };
 
+// Set once the shopper agrees to the data notice; nothing leaves the browser before that.
+const CONSENT_KEY = "larpai:consent:v1";
+
+async function hasConsent(): Promise<boolean> {
+  try {
+    const stored = await browser.storage.local.get(CONSENT_KEY);
+    return stored[CONSENT_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+async function activeListingTab() {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url || !SUPPORTED.test(tab.url)) return undefined;
+  return { id: tab.id, url: tab.url, key: normalizeListingKey(tab.url) };
+}
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const startCheck = useMutation(api.reports.startCheck);
+  // Listings checked while this panel is open, so switching back to one shows its report again.
+  const checked = useRef(new Map<string, Id<"reports">>());
+  // The listing the panel is showing; tab events for the same listing leave the panel alone.
+  const shownKey = useRef<string | undefined>(undefined);
+  // In-memory copy of the agreement, so a check still runs if storage can't be written.
+  const consented = useRef(false);
 
+  // Called on panel open, tab switch and navigation. Only looks at the tab URL; never sends anything.
+  const refresh = useCallback(async () => {
+    const tab = await activeListingTab();
+    if (tab?.key === shownKey.current && shownKey.current !== undefined) return;
+    shownKey.current = tab?.key;
+    if (!tab) return setPhase({ kind: "unsupported" });
+    const reportId = checked.current.get(tab.key);
+    setPhase(reportId ? { kind: "report", reportId, cached: false } : { kind: "ready" });
+  }, []);
+
+  // Runs only when the shopper presses a button.
   const run = useCallback(
     async (force = false) => {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id || !tab.url || !SUPPORTED.test(tab.url)) {
-        setPhase({ kind: "unsupported" });
-        return;
-      }
+      const tab = await activeListingTab();
+      shownKey.current = tab?.key;
+      if (!tab) return setPhase({ kind: "unsupported" });
+      if (!consented.current) consented.current = await hasConsent();
+      if (!consented.current) return setPhase({ kind: "consent" });
       setPhase({ kind: "extracting" });
       try {
         const res = await requestListing(tab.id);
@@ -62,20 +99,34 @@ export default function App() {
           throw new Error("Couldn't find the listing photos on this page. Scroll to the gallery and try again.");
         }
         const { reportId, cached } = await startCheck({ listing: res.listing, force });
-        setPhase({ kind: "report", reportId, cached });
+        checked.current.set(tab.key, reportId);
+        if (shownKey.current === tab.key) setPhase({ kind: "report", reportId, cached });
       } catch (err) {
-        setPhase({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+        if (shownKey.current === tab.key) {
+          setPhase({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+        }
       }
     },
     [startCheck],
   );
 
-  // Run on open, and again when the user switches tabs or navigates.
-  useEffect(() => {
+  const agree = async () => {
+    consented.current = true;
+    try {
+      await browser.storage.local.set({ [CONSENT_KEY]: true });
+    } catch (err) {
+      // Storage unavailable (e.g. extension not reloaded after the permission was added):
+      // the agreement still counts while this panel is open.
+      console.warn("LarpAI: couldn't save consent", err);
+    }
     run();
-    const onActivated = () => run();
+  };
+
+  useEffect(() => {
+    refresh();
+    const onActivated = () => refresh();
     const onUpdated = (_id: number, info: { status?: string }, tab: { active?: boolean }) => {
-      if (tab.active && info.status === "complete") run();
+      if (tab.active && info.status === "complete") refresh();
     };
     browser.tabs.onActivated.addListener(onActivated);
     browser.tabs.onUpdated.addListener(onUpdated);
@@ -83,7 +134,7 @@ export default function App() {
       browser.tabs.onActivated.removeListener(onActivated);
       browser.tabs.onUpdated.removeListener(onUpdated);
     };
-  }, [run]);
+  }, [refresh]);
 
   return (
     <main className="mx-auto min-h-screen max-w-md text-sm">
@@ -112,6 +163,20 @@ export default function App() {
             body="Open a Taobao, Tmall, Temu, or Amazon product page. The check runs on the listing you're already viewing."
           />
         )}
+        {phase.kind === "ready" && (
+          <section className="space-y-3 rounded-2xl border border-neutral-200 p-4 dark:border-neutral-800">
+            <div>
+              <p className="font-medium">Ready to check this listing</p>
+              <p className="mt-1 leading-relaxed text-neutral-500">
+                We'll compare its photos, reviews and price with what buyers actually got.
+              </p>
+            </div>
+            <button type="button" className={primaryButtonClass} onClick={() => run()}>
+              Check this listing
+            </button>
+          </section>
+        )}
+        {phase.kind === "consent" && <ConsentNotice onAgree={agree} onCancel={() => setPhase({ kind: "ready" })} />}
         {phase.kind === "extracting" && <ReadingCard />}
         {phase.kind === "error" && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
@@ -131,6 +196,38 @@ export default function App() {
 const buttonClass =
   "rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-neutral-800 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:focus-visible:outline-neutral-100";
 
+const primaryButtonClass =
+  "w-full rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200 dark:focus-visible:outline-neutral-100";
+
+function ConsentNotice({ onAgree, onCancel }: { onAgree: () => void; onCancel: () => void }) {
+  return (
+    <section className="space-y-3 rounded-2xl border border-neutral-200 p-4 dark:border-neutral-800">
+      <div>
+        <p className="font-medium">Before your first check</p>
+        <p className="mt-1 leading-relaxed text-neutral-600 dark:text-neutral-400">
+          LarpAI reads this listing's title, price, photos and the review text shown on the page. It never reads
+          reviewer names or anything about you.
+        </p>
+      </div>
+      <ul className="list-disc space-y-1.5 pl-5 leading-relaxed text-neutral-700 dark:text-neutral-300">
+        <li>The listing goes to the LarpAI server to run the checks.</li>
+        <li>The product name is searched on the public web (via Apify) to find the official product.</li>
+        <li>Photos and check results are analysed by Claude, Anthropic's AI model.</li>
+        <li>Reports are saved so the next check of the same listing is instant.</li>
+      </ul>
+      <p className="text-xs text-neutral-500">Nothing is sent until you press Check. This notice shows once.</p>
+      <div className="flex items-center gap-2">
+        <button type="button" className={primaryButtonClass} onClick={onAgree}>
+          I agree, check it
+        </button>
+        <button type="button" className={`${buttonClass} shrink-0`} onClick={onCancel}>
+          Not now
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean }) {
   const report = useQuery(api.reports.get, { reportId });
   if (report === undefined) return <StatusCard title="Connecting" body="Waiting for the report." />;
@@ -139,6 +236,7 @@ function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean
   const listing = report.listing as ListingInput;
   const checks = report.checks as Record<CheckName, CheckResult>;
   const steps = CHECK_NAMES.filter((name) => name !== "verdict");
+  const verdict = report.verdict as Verdict | undefined;
 
   return (
     <div className="space-y-4">
@@ -148,11 +246,12 @@ function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean
           Saved {new Date(report.createdAt).toLocaleString()}. Re-check to run it again.
         </p>
       )}
-      <VerdictHero verdict={report.verdict as Verdict | undefined} running={report.status === "running"} />
+      <VerdictHero verdict={verdict} running={report.status === "running"} />
+      {verdict && verdict.label !== "looks legit" && <Alternative checks={checks} listing={listing} />}
       <PhotoCompare listing={listing} />
       <ScoreStrip checks={checks} steps={steps} />
       {report.status === "running" && <CheckProgress checks={checks} steps={steps} />}
-      <VerdictDetails verdict={report.verdict as Verdict | undefined} />
+      <VerdictDetails verdict={verdict} />
       <section className="space-y-2">
         <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Checks</h2>
         {steps.map((name) => (
@@ -334,6 +433,69 @@ function ListingHeading({ listing }: { listing: ListingInput }) {
       </p>
       <h2 className="mt-1 line-clamp-2 text-sm font-medium leading-snug">{listing.title}</h2>
     </div>
+  );
+}
+
+// Shapes the comparison and price steps save in `details` (see convex/steps/comparison.ts and price.ts).
+type FoundListing = {
+  url: string;
+  title: string;
+  isOfficial: boolean;
+  images: string[];
+  price?: { amount: number; currency: string };
+};
+type ConvertedPrice = { url: string; amount: number };
+
+// Points the shopper at the official page, or failing that a priced product page,
+// that the comparison step found. Only real search results; shows nothing if there are none.
+function pickAlternative(checks: Record<CheckName, CheckResult>, currency?: string) {
+  if (checks.comparison.status !== "done") return undefined;
+  const found = (checks.comparison.details?.comparables as FoundListing[] | undefined) ?? [];
+  const pick = found
+    .filter((c) => c.isOfficial || c.price)
+    .sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial) || Number(!!b.price) - Number(!!a.price))[0];
+  if (!pick) return undefined;
+
+  // Prefer the price check's figure, already converted to the listing's currency.
+  const converted =
+    checks.price.status === "done"
+      ? (checks.price.details?.comparables as ConvertedPrice[] | undefined)?.find((c) => c.url === pick.url)
+      : undefined;
+  const price =
+    converted && currency ? formatPrice({ amount: converted.amount, currency }) : formatPrice(pick.price);
+  return { ...pick, price };
+}
+
+function Alternative({ checks, listing }: { checks: Record<CheckName, CheckResult>; listing: ListingInput }) {
+  const alt = pickAlternative(checks, listing.price?.currency);
+  if (!alt) return null;
+  let host = alt.url;
+  try {
+    host = new URL(alt.url).hostname.replace(/^www\./, "");
+  } catch {
+    // keep the raw URL
+  }
+  const listingPrice = formatPrice(listing.price);
+  return (
+    <section className="rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
+      <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-neutral-500">Before you buy, compare with</h2>
+      <a href={alt.url} target="_blank" rel="noreferrer" className="flex gap-3 rounded-xl transition hover:opacity-80">
+        {alt.images[0] && (
+          <img src={alt.images[0]} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-neutral-200 dark:ring-neutral-700" />
+        )}
+        <div className="min-w-0">
+          <p className="line-clamp-2 font-medium leading-snug underline decoration-neutral-300 underline-offset-2">{alt.title || host}</p>
+          <p className="mt-1 text-xs text-neutral-500">
+            {alt.isOfficial ? "Official brand site" : host}
+            {alt.price && ` · ${alt.price}`}
+            {alt.price && listingPrice && ` (this listing ${listingPrice})`}
+          </p>
+        </div>
+      </a>
+      {!alt.isOfficial && (
+        <p className="mt-2 text-xs text-neutral-500">Found by web search. We haven't checked this page ourselves.</p>
+      )}
+    </section>
   );
 }
 

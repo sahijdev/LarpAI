@@ -11,8 +11,8 @@ export default defineConfig({
   manifest: {
     name: "LarpAI",
     description: "Is this listing larping? Checks whether a shopping listing matches what you'll actually get.",
-    // scripting: re-inject the content script into tabs opened before the extension (re)loaded.
-    permissions: ["sidePanel", "tabs", "scripting"],
+    // storage: remembers the one-time data notice. scripting: re-inject the content script into tabs opened before the extension (re)loaded.
+    permissions: ["sidePanel", "tabs", "scripting", "storage"],
     host_permissions: [
       "*://item.taobao.com/*",
       "*://detail.tmall.com/*",
