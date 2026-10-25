@@ -280,9 +280,10 @@ function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean
   useEffect(() => {
     if (report === undefined) return;
     postToPage(
-      label !== undefined
+      // While running, a label means an early verdict: show it, plus the progress of what's left.
+      label !== undefined && !running
         ? { type: "larpai:status", state: "done", score, label, reason }
-        : { type: "larpai:status", state: running ? "running" : "idle", progress },
+        : { type: "larpai:status", state: running ? "running" : "idle", progress, score, label, reason },
     );
   }, [report === undefined, running, score, label, reason, progressKey]);
 
@@ -369,6 +370,11 @@ function VerdictHero({ verdict, running }: { verdict?: Verdict; running: boolean
         <div className="min-w-0">
           <p className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${tone.pill}`}>{LABEL_COPY[verdict.label]}</p>
           <p className="mt-1.5 text-xs capitalize text-neutral-500">{verdict.confidence} confidence</p>
+          {running && (
+            <p className="mt-1 text-xs text-neutral-500">
+              Early result from photos and reviews. Still checking the official product and price, so this may change.
+            </p>
+          )}
         </div>
       </div>
       <div className="h-1 bg-neutral-100 dark:bg-neutral-800">

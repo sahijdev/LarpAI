@@ -173,8 +173,8 @@ export function mountPageUi(ctx: ContentScriptContext): PageUi {
   const isOpen = () => !drawer.hidden;
 
   const render = () => {
-    const tone =
-      status.state === "running" ? "running" : status.state === "done" && status.label ? TONES[status.label] : undefined;
+    // An early verdict (label while still running) takes the verdict's color.
+    const tone = status.label ? TONES[status.label] : status.state === "running" ? "running" : undefined;
     if (tone) strip.dataset.tone = tone;
     else delete strip.dataset.tone;
 
@@ -197,9 +197,17 @@ export function mountPageUi(ctx: ContentScriptContext): PageUi {
     } else if (running) {
       const p = status.progress;
       const secs = Math.round((Date.now() - (runStarted ?? Date.now())) / 1000);
-      headline = "Checking";
-      stripSteps.textContent = p ? `${p.done} of ${p.total} steps · ${secs}s` : `${secs}s`;
-      stripSub.textContent = p ? `${p.current}…` : "Starting…";
+      const stepsText = p ? `${p.done} of ${p.total} steps · ${secs}s` : `${secs}s`;
+      if (status.label) {
+        // Early verdict from photos and reviews; the final one replaces it.
+        headline = status.label === "not enough data" ? LABELS[status.label] : `${status.score} · ${LABELS[status.label]}`;
+        stripSteps.textContent = `early result · ${stepsText}`;
+        stripSub.textContent = `${status.reason ? `${status.reason} ` : ""}Still checking: ${p?.current ?? "official product and price"}…`;
+      } else {
+        headline = "Checking";
+        stripSteps.textContent = stepsText;
+        stripSub.textContent = p ? `${p.current}…` : "Starting…";
+      }
       // Count a step in progress as half done so the bar moves as soon as work starts.
       const pct = p ? Math.max(4, Math.min(100, ((p.done + (p.current !== "Starting" ? 0.5 : 0)) / p.total) * 100)) : 4;
       fill.style.width = `${pct}%`;

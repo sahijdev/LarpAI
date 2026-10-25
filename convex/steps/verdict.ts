@@ -27,12 +27,15 @@ Rules:
 - Seller: if the listing is sold by the marketplace itself (e.g. "Amazon.com") or the brand's own store, a price below the brand's list price is most likely a sale, not bait, and photos matching the brand's own are expected. An unknown third-party seller deserves more caution.
 - Rating summary: it covers every buyer, not just the few reviews shown on the page. A high average from thousands of ratings is strong evidence that buyers generally get what's shown. A low average or ratings split between 5 and 1 stars is a concern.
 - Photo evidence can be uncertain: buyer photos may show another color or version sold on the same page, may be few, or may be unclear. When the photo check lists uncertainties, lower confidence rather than the score, and don't call a listing misleading on uncertain photo evidence alone, especially when the seller and ratings look solid.
+- A check that is "pending" or "running" hasn't finished yet (this is an early result). Judge only what has finished, keep confidence at most "medium", and don't list unfinished checks in caveats; the shopper is already told they're still running.
 - We judge whether the listing is honest about the product. We do not judge whether it is counterfeit, so don't call anything fake or a replica.
 - Write plainly for a shopper, with no jargon.`;
 
 export async function runVerdict(
   listing: ListingInput,
   checks: Record<Exclude<CheckName, "verdict">, CheckResult>,
+  // early: some checks are still running; this verdict is shown until the final one replaces it.
+  { early = false }: { early?: boolean } = {},
 ): Promise<Verdict> {
   const client = new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY") });
 
@@ -62,13 +65,16 @@ export async function runVerdict(
     model: "claude-sonnet-5-5",
     max_tokens: 4096,
     system: SYSTEM,
-    output_config: { effort: "medium", format: zodOutputFormat(VerdictSchema) },
+    // The early verdict is about speed; the final one gets more thought.
+    output_config: { effort: early ? "low" : "medium", format: zodOutputFormat(VerdictSchema) },
     messages: [{ role: "user", content: JSON.stringify(payload, null, 2) }],
   });
   if (res.stop_reason === "refusal") throw new Error("Claude declined to write a verdict for this listing");
   if (!res.parsed_output) throw new Error("Claude returned a verdict we couldn't read");
 
-  return enforceRules(res.parsed_output, checks);
+  const verdict = enforceRules(res.parsed_output, checks);
+  if (early && verdict.confidence === "high") verdict.confidence = "medium";
+  return verdict;
 }
 
 // The model is instructed on these rules; enforce them in code too so a bad output can't overclaim.
