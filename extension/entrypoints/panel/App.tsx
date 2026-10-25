@@ -145,9 +145,7 @@ export default function App() {
     <main className="mx-auto min-h-screen max-w-md text-sm">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200/80 bg-white/90 px-4 py-3 backdrop-blur-md dark:border-neutral-800 dark:bg-neutral-950/90">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 text-xs font-semibold text-white dark:bg-white dark:text-neutral-950">
-            L
-          </span>
+          <img src="/icon/48.png" alt="" className="h-8 w-8 rounded-lg bg-white object-contain" />
           <div>
             <h1 className="text-sm font-semibold leading-none tracking-tight">LarpAI</h1>
             <p className="mt-1 text-[11px] text-neutral-500">Does this listing match?</p>
