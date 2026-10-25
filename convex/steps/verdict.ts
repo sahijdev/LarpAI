@@ -20,8 +20,8 @@ You receive the listing and the results of automated checks. Each check has a st
 
 Rules:
 - score is 0-100, where higher means the listing matches reality better.
-- Every reason must point to a specific check result (for example "Buyer photos show a darker color than the seller photos (image check)"). Give 2-5 reasons.
-- caveats must name every check that errored or was skipped, plus any real limits on what the evidence shows (for example: reused official photos are normal for authorised resellers).
+- Every reason must point to a specific check result (for example "Buyer photos show a darker color than the seller photos (image check)"). Give 1-2 reasons, one short sentence each (under 20 words), most important first.
+- caveats: at most 2 short sentences in total. Merge every errored or skipped check into one line (for example "The review and price checks didn't run."). Add a second line only for a real limit on the evidence that changes how to read the result. No generic disclaimers.
 - If the image check is missing, or fewer than two checks produced results, use label "not enough data" and confidence "low" rather than guessing.
 - Lower confidence when checks are missing or disagree.
 - Seller: if the listing is sold by the marketplace itself (e.g. "Amazon.com") or the brand's own store, a price below the brand's list price is most likely a sale, not bait, and photos matching the brand's own are expected. An unknown third-party seller deserves more caution.
@@ -77,18 +77,14 @@ function enforceRules(v: Verdict, checks: Record<string, CheckResult>): Verdict 
   const verdict: Verdict = {
     ...v,
     score: clamp(v.score),
-    reasons: v.reasons.slice(0, 5),
+    reasons: v.reasons.slice(0, 2),
   };
 
-  for (const c of missing) {
-    if (!verdict.caveats.some((cv) => cv.toLowerCase().includes(c.name))) {
-      verdict.caveats.push(
-        c.status === "error"
-          ? `The ${c.name} check failed (${c.error ?? "unknown error"}), so it isn't reflected here.`
-          : `The ${c.name} check was skipped: ${c.summary ?? "not enough data"}.`,
-      );
-    }
+  const unmentioned = missing.filter((c) => !verdict.caveats.some((cv) => cv.toLowerCase().includes(c.name)));
+  if (unmentioned.length > 0) {
+    verdict.caveats.unshift(`The ${unmentioned.map((c) => c.name).join(" and ")} check didn't run, so it isn't reflected here.`);
   }
+  verdict.caveats = verdict.caveats.slice(0, 2);
 
   if (missing.length >= 2) verdict.confidence = "low";
   else if (missing.length === 1 && verdict.confidence === "high") verdict.confidence = "medium";

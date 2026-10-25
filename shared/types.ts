@@ -41,8 +41,8 @@ export type Verdict = {
   score: number;               // 0–100 overall match score
   label: "looks legit" | "some concerns" | "likely misleading" | "not enough data";
   confidence: "low" | "medium" | "high";
-  reasons: string[];           // 2–5 bullet reasons, each tied to evidence
-  caveats: string[];           // what we couldn't check / where we might be wrong
+  reasons: string[];           // 1–2 short reasons, each tied to evidence
+  caveats: string[];           // at most 2 short lines: what we couldn't check / where we might be wrong
 };
 
 export type Report = {
