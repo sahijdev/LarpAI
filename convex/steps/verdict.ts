@@ -30,6 +30,12 @@ Rules:
 - We judge whether the listing is honest about the product. We do not judge whether it is counterfeit, so don't call anything fake or a replica.
 - Write plainly for a shopper, with no jargon.`;
 
+// A check skipped because the page had nothing for it to judge (no comparable prices, no reviews).
+// It's left out of the verdict entirely: not sent to the model, not counted as missing.
+function isNotApplicable(c: CheckResult): boolean {
+  return c.status === "skipped" && (c.details as { notApplicable?: boolean } | undefined)?.notApplicable === true;
+}
+
 export async function runVerdict(
   listing: ListingInput,
   checks: Record<Exclude<CheckName, "verdict">, CheckResult>,
@@ -48,7 +54,7 @@ export async function runVerdict(
       seller: listing.seller ?? "not shown on the page",
       ratingSummary: listing.ratingSummary ?? "not shown on the page",
     },
-    checks: Object.values(checks).map(({ name, status, score, summary, details, error }) => ({
+    checks: Object.values(checks).filter((c) => !isNotApplicable(c)).map(({ name, status, score, summary, details, error }) => ({
       name,
       status,
       score,
@@ -73,7 +79,9 @@ export async function runVerdict(
 
 // The model is instructed on these rules; enforce them in code too so a bad output can't overclaim.
 function enforceRules(v: Verdict, checks: Record<string, CheckResult>): Verdict {
-  const missing = Object.values(checks).filter((c) => c.status === "error" || c.status === "skipped");
+  const missing = Object.values(checks).filter(
+    (c) => (c.status === "error" || c.status === "skipped") && !isNotApplicable(c),
+  );
   const verdict: Verdict = {
     ...v,
     score: clamp(v.score),

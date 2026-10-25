@@ -21,10 +21,17 @@ async function toCurrency(amount: number, from: string, to: string): Promise<num
 }
 
 export async function runPrice(listing: ListingInput, found?: ComparisonDetails): Promise<StepOutput> {
-  if (!listing.price) return { status: "skipped", summary: "Listing price wasn't visible on the page" };
+  // notApplicable: no data to judge, so the verdict leaves this check out instead of counting it as missing.
+  if (!listing.price) {
+    return { status: "skipped", summary: "Listing price wasn't visible on the page", details: { notApplicable: true } };
+  }
   const priced = found?.comparables.filter((c) => c.price && c.price.amount > 0) ?? [];
   if (priced.length === 0) {
-    return { status: "skipped", summary: "No comparable prices found to compare against" };
+    return {
+      status: "skipped",
+      summary: "No comparable prices found to compare against",
+      details: { notApplicable: true },
+    };
   }
 
   const target = listing.price.currency;
