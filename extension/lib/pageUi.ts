@@ -1,4 +1,4 @@
-import { AUTOSTART_PARAM, type FrameMessage, type FrameStatus, type StartMessage } from "./pageMessages";
+import { AUTOSTART_PARAM, hasConsent, type FrameMessage, type FrameStatus, type StartMessage } from "./pageMessages";
 import { SELECTORS, WORLD_SELECTORS } from "./taobaoSelectors";
 
 const ROOT_ID = "larpai-root";
@@ -41,7 +41,7 @@ ${dotCss(".launcher")}
 }
 `;
 
-// Summary strip placed under the listing title. Taobao has no dark mode, so this is light only.
+// Summary strip placed under the listing title. The sites render light pages, so this is light only.
 const INLINE_CSS = `
 :host { all: initial; display: block; }
 .strip {
@@ -97,15 +97,20 @@ const LABELS: Record<string, string> = {
   "not enough data": "Not enough data",
 };
 
-// The listing title on Taobao/Tmall pages, where the inline summary goes. Other sites use the floating button only.
-function findTaobaoTitle(): Element | null {
+// Amazon's title block (the whole section, not the inline #productTitle span inside it).
+const AMAZON_TITLE = ["#titleSection", "#title_feature_div", "#title"];
+
+// The listing title, where the inline summary goes. Sites without one here (Temu) use the floating button.
+function findTitle(): Element | null {
   const host = location.hostname;
-  const selectors =
+  const selectors: readonly string[] =
     host === "world.taobao.com"
       ? WORLD_SELECTORS.title
       : /(^|\.)(taobao|tmall)\.com$/.test(host)
         ? SELECTORS.title
-        : [];
+        : /(^|\.)amazon\.[a-z.]+$/.test(host)
+          ? AMAZON_TITLE
+          : [];
   for (const sel of selectors) {
     const el = document.querySelector(sel);
     if (el?.textContent?.trim()) return el;
@@ -192,7 +197,7 @@ export function mountPageUi(): PageUi {
   // Keeps the summary under the title. Taobao re-renders parts of the page (e.g. picking a variant),
   // which can remove it, and the title may load after this script runs.
   const placeInline = () => {
-    const title = isListing ? findTaobaoTitle() : null;
+    const title = isListing ? findTitle() : null;
     if (!title) {
       if (inlineHost.isConnected) inlineHost.remove();
     } else if (title.nextElementSibling !== inlineHost) {
@@ -213,10 +218,11 @@ export function mountPageUi(): PageUi {
     subtree: true,
   });
 
-  // `start`: the shopper pressed "Check listing", so begin the check, not just show the drawer.
-  const open = (start: boolean) => {
+  // The report frame holds the backend connection. It's created only when the shopper clicks,
+  // or for an automatic check once they've agreed to the data notice.
+  // `start` begins a check (not just loading the report view).
+  const ensureFrame = (start: boolean) => {
     if (!frame) {
-      // Created on first open, so nothing loads (or connects to the backend) until the shopper asks.
       const url = new URL(browser.runtime.getURL("/panel.html"));
       if (start) url.searchParams.set(AUTOSTART_PARAM, "1");
       frame = document.createElement("iframe");
@@ -226,9 +232,14 @@ export function mountPageUi(): PageUi {
     } else if (start) {
       frame.contentWindow?.postMessage({ type: "larpai:start" } satisfies StartMessage, "*");
     }
+    return frame;
+  };
+
+  const open = (start: boolean) => {
+    const f = ensureFrame(start);
     drawer.hidden = false;
     render();
-    frame.focus();
+    f.focus();
   };
   const close = () => {
     drawer.hidden = true;
@@ -251,11 +262,22 @@ export function mountPageUi(): PageUi {
     }
   });
 
+  // Check the listing in the background (the drawer stays closed; results show inline / on the button).
+  // Waits briefly so client-rendered pages (Taobao, Temu) have their photos on the page.
+  let autoTimer: number | undefined;
+  const scheduleAutoCheck = () => {
+    window.clearTimeout(autoTimer);
+    autoTimer = window.setTimeout(async () => {
+      if (isListing && (await hasConsent())) ensureFrame(true);
+    }, 1500);
+  };
+
   return {
     toggle: () => (isOpen() ? close() : open(false)),
     setListingPage(value) {
       isListing = value;
       placeInline();
+      if (value) scheduleAutoCheck();
     },
   };
 }

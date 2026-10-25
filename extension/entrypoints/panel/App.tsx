@@ -4,7 +4,14 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { CheckName, CheckResult, ListingInput, Verdict } from "../../../shared/types";
 import { CHECK_NAMES, normalizeListingKey } from "../../../shared/listingKey";
-import { AUTOSTART_PARAM, isSupportedListing, postToPage, type StartMessage } from "../../lib/pageMessages";
+import {
+  AUTOSTART_PARAM,
+  CONSENT_KEY,
+  hasConsent,
+  isSupportedListing,
+  postToPage,
+  type StartMessage,
+} from "../../lib/pageMessages";
 
 type ExtractResponse = { ok: true; listing: ListingInput } | { ok: false; error: string } | undefined;
 
@@ -27,17 +34,6 @@ type Phase =
   | { kind: "error"; message: string }
   | { kind: "report"; reportId: Id<"reports">; cached: boolean };
 
-// Set once the shopper agrees to the data notice; nothing leaves the browser before that.
-const CONSENT_KEY = "larpai:consent:v1";
-
-async function hasConsent(): Promise<boolean> {
-  try {
-    const stored = await browser.storage.local.get(CONSENT_KEY);
-    return stored[CONSENT_KEY] === true;
-  } catch {
-    return false;
-  }
-}
 
 // The tab this drawer is embedded in. getCurrent() resolves it for a frame inside a tab;
 // the active-tab query is a fallback (the shopper just clicked the drawer open, so it's the active tab).
@@ -60,7 +56,9 @@ export default function App() {
 
   // Keep the on-page button in sync when there's no report on screen.
   useEffect(() => {
-    if (phase.kind !== "report") postToPage({ type: "larpai:status", state: "idle" });
+    if (phase.kind !== "report") {
+      postToPage({ type: "larpai:status", state: phase.kind === "extracting" ? "running" : "idle" });
+    }
   }, [phase.kind]);
 
   // Called when the drawer opens and when the tab navigates. Only looks at the tab URL; never sends anything.
@@ -232,7 +230,10 @@ function ConsentNotice({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
         <li>Photos and check results are analysed by Claude, Anthropic's AI model.</li>
         <li>Reports are saved so the next check of the same listing is instant.</li>
       </ul>
-      <p className="text-xs text-neutral-500">Nothing is sent until you press Check. This notice shows once.</p>
+      <p className="text-xs text-neutral-500">
+        Nothing is sent until you agree. After that, LarpAI checks Amazon, Taobao, Tmall and Temu product pages
+        automatically when you open them. This notice shows once.
+      </p>
       <div className="flex items-center gap-2">
         <button type="button" className={primaryButtonClass} onClick={onAgree}>
           I agree, check it

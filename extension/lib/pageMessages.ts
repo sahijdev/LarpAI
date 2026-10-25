@@ -13,6 +13,19 @@ const SUPPORTED = new RegExp(
 
 export const isSupportedListing = (url: string) => SUPPORTED.test(url);
 
+// Set once the shopper agrees to the data notice. Before that nothing leaves the browser;
+// after it, product pages are checked automatically when opened.
+export const CONSENT_KEY = "larpai:consent:v1";
+
+export async function hasConsent(): Promise<boolean> {
+  try {
+    const stored = await browser.storage.local.get(CONSENT_KEY);
+    return stored[CONSENT_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
 // Background → content script.
 export type ToggleMessage = { type: "larpai:toggle" };
 
