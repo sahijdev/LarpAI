@@ -231,8 +231,7 @@ function ConsentNotice({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
         <li>Reports are saved so the next check of the same listing is instant.</li>
       </ul>
       <p className="text-xs text-neutral-500">
-        Nothing is sent until you agree. After that, LarpAI checks Amazon, Taobao, Tmall and Temu product pages
-        automatically when you open them. This notice shows once.
+        Nothing is sent until you agree, and after that only when you press Check listing. This notice shows once.
       </p>
       <div className="flex items-center gap-2">
         <button type="button" className={primaryButtonClass} onClick={onAgree}>
