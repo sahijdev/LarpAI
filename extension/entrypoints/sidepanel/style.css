@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 body {
-  @apply bg-white text-neutral-900;
+  @apply bg-white text-neutral-900 antialiased;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.photo-row {
+  scrollbar-width: none;
+}
+
+.photo-row::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-color-scheme: dark) {
