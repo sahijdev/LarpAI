@@ -25,7 +25,7 @@ export default defineConfig({
     permissions: ["tabs", "scripting", "storage"],
     host_permissions: LISTING_SITES,
     // The report drawer is panel.html shown in an iframe on the listing page.
-    web_accessible_resources: [{ resources: ["panel.html"], matches: LISTING_SITES }],
+    web_accessible_resources: [{ resources: ["panel.html", "icon/48.png"], matches: LISTING_SITES }],
     action: { default_title: "Check this listing" },
   },
 });

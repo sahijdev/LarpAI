@@ -34,9 +34,9 @@ const INLINE_CSS = `
 .strip[data-tone="concerns"], .strip[data-tone="running"] { border-left-color: #f59e0b; }
 .strip[data-tone="misleading"] { border-left-color: #ef4444; }
 .logo {
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  flex-shrink: 0;
   width: 26px; height: 26px; border-radius: 8px;
-  background: #171717; color: #fff; font-weight: 600; font-size: 12px;
+  object-fit: contain; background: #fff;
 }
 .body { flex: 1; min-width: 0; }
 .headline { display: flex; align-items: center; gap: 6px; font-weight: 600; }
@@ -117,7 +117,7 @@ export function mountPageUi(): PageUi {
   inline.innerHTML = `
     <style>${INLINE_CSS}</style>
     <div class="strip" role="region" aria-label="LarpAI listing check">
-      <span class="logo">L</span>
+      <img class="logo" alt="" src="${browser.runtime.getURL("/icon/48.png")}" />
       <div class="body">
         <div class="headline"><span class="dot"></span><span class="title"></span></div>
         <div class="sub"></div>
