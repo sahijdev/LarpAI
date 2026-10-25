@@ -1,9 +1,13 @@
-import type { FrameMessage } from "./pageMessages";
+import { AUTOSTART_PARAM, type FrameMessage, type FrameStatus, type StartMessage } from "./pageMessages";
+import { SELECTORS, WORLD_SELECTORS } from "./taobaoSelectors";
 
 const ROOT_ID = "larpai-root";
+const INLINE_ID = "larpai-inline";
 
-// Lives in a closed shadow root so the shopping site's CSS can't restyle it (and ours can't leak out).
-const CSS = `
+const FONT = `system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif`;
+
+// Floating button + drawer. Lives in a closed shadow root so the site's CSS can't restyle it.
+const FLOATING_CSS = `
 :host { all: initial; }
 [hidden] { display: none !important; }
 .launcher {
@@ -11,7 +15,7 @@ const CSS = `
   display: flex; align-items: center; gap: 8px;
   padding: 6px 14px 6px 6px; border-radius: 999px;
   border: 1px solid rgba(0, 0, 0, 0.1); background: #fff; color: #171717;
-  font: 500 13px/1.2 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+  font: 500 13px/1.2 ${FONT};
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16); cursor: pointer;
   transition: background 0.15s, transform 0.15s;
 }
@@ -22,14 +26,7 @@ const CSS = `
   width: 26px; height: 26px; border-radius: 999px;
   background: #171717; color: #fff; font-weight: 600; font-size: 12px;
 }
-.dot { display: none; width: 8px; height: 8px; border-radius: 999px; }
-.launcher[data-tone] .dot { display: block; }
-.launcher[data-tone="legit"] .dot { background: #10b981; }
-.launcher[data-tone="concerns"] .dot { background: #f59e0b; }
-.launcher[data-tone="misleading"] .dot { background: #ef4444; }
-.launcher[data-tone="nodata"] .dot { background: #a3a3a3; }
-.launcher[data-tone="running"] .dot { background: #f59e0b; animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.3; } }
+${dotCss(".launcher")}
 .drawer {
   position: fixed; top: 0; right: 0; z-index: 2147483647;
   width: min(420px, 100vw); height: 100vh;
@@ -43,6 +40,48 @@ const CSS = `
   .drawer { background: #0a0a0a; }
 }
 `;
+
+// Summary strip placed under the listing title. Taobao has no dark mode, so this is light only.
+const INLINE_CSS = `
+:host { all: initial; display: block; }
+.strip {
+  display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%;
+  margin: 10px 0; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid #e5e5e5; border-left: 4px solid #d4d4d4; background: #fff; color: #171717;
+  font: 13px/1.4 ${FONT};
+}
+.strip[data-tone="legit"] { border-left-color: #10b981; }
+.strip[data-tone="concerns"], .strip[data-tone="running"] { border-left-color: #f59e0b; }
+.strip[data-tone="misleading"] { border-left-color: #ef4444; }
+.logo {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 26px; height: 26px; border-radius: 8px;
+  background: #171717; color: #fff; font-weight: 600; font-size: 12px;
+}
+.body { flex: 1; min-width: 0; }
+.headline { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.sub { margin-top: 2px; color: #525252; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+${dotCss(".strip")}
+.action {
+  flex-shrink: 0; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid #d4d4d4; background: #fff; color: #171717;
+  font: 500 12px/1.2 ${FONT}; cursor: pointer;
+}
+.action:hover { background: #f5f5f5; }
+.action:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
+`;
+
+function dotCss(scope: string) {
+  return `
+.dot { display: none; flex-shrink: 0; width: 8px; height: 8px; border-radius: 999px; }
+${scope}[data-tone] .dot { display: block; }
+${scope}[data-tone="legit"] .dot { background: #10b981; }
+${scope}[data-tone="concerns"] .dot { background: #f59e0b; }
+${scope}[data-tone="misleading"] .dot { background: #ef4444; }
+${scope}[data-tone="nodata"] .dot { background: #a3a3a3; }
+${scope}[data-tone="running"] .dot { background: #f59e0b; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }`;
+}
 
 const TONES: Record<string, string> = {
   "looks legit": "legit",
@@ -58,53 +97,147 @@ const LABELS: Record<string, string> = {
   "not enough data": "Not enough data",
 };
 
+// The listing title on Taobao/Tmall pages, where the inline summary goes. Other sites use the floating button only.
+function findTaobaoTitle(): Element | null {
+  const host = location.hostname;
+  const selectors =
+    host === "world.taobao.com"
+      ? WORLD_SELECTORS.title
+      : /(^|\.)(taobao|tmall)\.com$/.test(host)
+        ? SELECTORS.title
+        : [];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el?.textContent?.trim()) return el;
+  }
+  return null;
+}
+
 export type PageUi = { toggle(): void; setListingPage(isListing: boolean): void };
 
-// The floating "LarpAI" button plus the drawer that holds the report (an extension page in an iframe).
 export function mountPageUi(): PageUi {
   // A previous copy of this script (from before the extension reloaded) can't talk to the extension anymore.
   document.getElementById(ROOT_ID)?.remove();
+  document.getElementById(INLINE_ID)?.remove();
 
+  // Floating button + drawer.
   const host = document.createElement("div");
   host.id = ROOT_ID;
   const shadow = host.attachShadow({ mode: "closed" });
   shadow.innerHTML = `
-    <style>${CSS}</style>
+    <style>${FLOATING_CSS}</style>
     <button class="launcher" type="button" aria-label="Open LarpAI listing check" hidden>
       <span class="logo">L</span><span class="dot"></span><span class="text">Check listing</span>
     </button>
     <div class="drawer" role="dialog" aria-label="LarpAI report" hidden></div>`;
   document.documentElement.appendChild(host);
-
   const launcher = shadow.querySelector<HTMLButtonElement>(".launcher")!;
-  const text = shadow.querySelector<HTMLSpanElement>(".text")!;
+  const launcherText = shadow.querySelector<HTMLSpanElement>(".text")!;
   const drawer = shadow.querySelector<HTMLDivElement>(".drawer")!;
+
+  // Inline summary (inserted into the page next to the title when we can find it).
+  const inlineHost = document.createElement("div");
+  inlineHost.id = INLINE_ID;
+  const inline = inlineHost.attachShadow({ mode: "closed" });
+  inline.innerHTML = `
+    <style>${INLINE_CSS}</style>
+    <div class="strip" role="region" aria-label="LarpAI listing check">
+      <span class="logo">L</span>
+      <div class="body">
+        <div class="headline"><span class="dot"></span><span class="title"></span></div>
+        <div class="sub"></div>
+      </div>
+      <button class="action" type="button"></button>
+    </div>`;
+  const strip = inline.querySelector<HTMLDivElement>(".strip")!;
+  const stripTitle = inline.querySelector<HTMLSpanElement>(".title")!;
+  const stripSub = inline.querySelector<HTMLDivElement>(".sub")!;
+  const stripAction = inline.querySelector<HTMLButtonElement>(".action")!;
+
   let frame: HTMLIFrameElement | undefined;
   let isListing = false;
+  let status: FrameStatus = { state: "idle" };
 
   const isOpen = () => !drawer.hidden;
-  const syncLauncher = () => {
-    launcher.hidden = !isListing || isOpen();
+
+  const render = () => {
+    const tone =
+      status.state === "running" ? "running" : status.state === "done" && status.label ? TONES[status.label] : undefined;
+    for (const el of [launcher, strip]) {
+      if (tone) el.dataset.tone = tone;
+      else delete el.dataset.tone;
+    }
+
+    let headline: string;
+    if (status.state === "done" && status.label) {
+      headline = status.label === "not enough data" ? LABELS[status.label] : `${status.score} · ${LABELS[status.label]}`;
+      stripSub.textContent = status.reason ?? "";
+      stripAction.textContent = "See full report";
+    } else if (status.state === "running") {
+      headline = "Checking…";
+      stripSub.textContent = "Comparing photos, reviews and price. Results appear here.";
+      stripAction.textContent = "Open report";
+    } else {
+      headline = "Check listing";
+      stripSub.textContent = "LarpAI checks whether the photos, reviews and price match reality.";
+      stripAction.textContent = "Check listing";
+    }
+    launcherText.textContent = headline;
+    stripTitle.textContent = status.state === "idle" ? "Does this listing match?" : headline;
+
+    // The floating button is the fallback when the inline summary isn't on the page.
+    launcher.hidden = !isListing || isOpen() || inlineHost.isConnected;
   };
 
-  const open = () => {
-    // Created on first open, so nothing loads (or connects to the backend) until the shopper asks.
+  // Keeps the summary under the title. Taobao re-renders parts of the page (e.g. picking a variant),
+  // which can remove it, and the title may load after this script runs.
+  const placeInline = () => {
+    const title = isListing ? findTaobaoTitle() : null;
+    if (!title) {
+      if (inlineHost.isConnected) inlineHost.remove();
+    } else if (title.nextElementSibling !== inlineHost) {
+      title.insertAdjacentElement("afterend", inlineHost);
+    }
+    render();
+  };
+  let placeTimer: number | undefined;
+  const schedulePlace = () => {
+    if (placeTimer !== undefined) return;
+    placeTimer = window.setTimeout(() => {
+      placeTimer = undefined;
+      placeInline();
+    }, 300);
+  };
+  new MutationObserver(schedulePlace).observe(document.body ?? document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+
+  // `start`: the shopper pressed "Check listing", so begin the check, not just show the drawer.
+  const open = (start: boolean) => {
     if (!frame) {
+      // Created on first open, so nothing loads (or connects to the backend) until the shopper asks.
+      const url = new URL(browser.runtime.getURL("/panel.html"));
+      if (start) url.searchParams.set(AUTOSTART_PARAM, "1");
       frame = document.createElement("iframe");
-      frame.src = browser.runtime.getURL("/panel.html");
+      frame.src = url.href;
       frame.title = "LarpAI report";
       drawer.appendChild(frame);
+    } else if (start) {
+      frame.contentWindow?.postMessage({ type: "larpai:start" } satisfies StartMessage, "*");
     }
     drawer.hidden = false;
-    syncLauncher();
+    render();
     frame.focus();
   };
   const close = () => {
     drawer.hidden = true;
-    syncLauncher();
+    render();
   };
 
-  launcher.addEventListener("click", open);
+  const onPress = () => open(status.state === "idle");
+  launcher.addEventListener("click", onPress);
+  stripAction.addEventListener("click", onPress);
 
   window.addEventListener("message", (event) => {
     // Only trust messages from our own frame; the shopping site can post messages too.
@@ -112,24 +245,17 @@ export function mountPageUi(): PageUi {
     const msg = event.data as FrameMessage;
     if (msg?.type === "larpai:close") close();
     if (msg?.type === "larpai:status") {
-      if (msg.state === "done" && msg.label) {
-        launcher.dataset.tone = TONES[msg.label];
-        text.textContent = msg.label === "not enough data" ? LABELS[msg.label] : `${msg.score} · ${LABELS[msg.label]}`;
-      } else if (msg.state === "running") {
-        launcher.dataset.tone = "running";
-        text.textContent = "Checking…";
-      } else {
-        delete launcher.dataset.tone;
-        text.textContent = "Check listing";
-      }
+      const { type: _type, ...next } = msg;
+      status = next;
+      render();
     }
   });
 
   return {
-    toggle: () => (isOpen() ? close() : open()),
+    toggle: () => (isOpen() ? close() : open(false)),
     setListingPage(value) {
       isListing = value;
-      syncLauncher();
+      placeInline();
     },
   };
 }

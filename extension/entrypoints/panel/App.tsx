@@ -4,7 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { CheckName, CheckResult, ListingInput, Verdict } from "../../../shared/types";
 import { CHECK_NAMES, normalizeListingKey } from "../../../shared/listingKey";
-import { isSupportedListing, postToPage } from "../../lib/pageMessages";
+import { AUTOSTART_PARAM, isSupportedListing, postToPage, type StartMessage } from "../../lib/pageMessages";
 
 type ExtractResponse = { ok: true; listing: ListingInput } | { ok: false; error: string } | undefined;
 
@@ -113,8 +113,19 @@ export default function App() {
     run();
   };
 
+  // "Check listing" on the page starts the check straight away (consent is still asked first).
   useEffect(() => {
-    refresh();
+    if (new URLSearchParams(location.search).has(AUTOSTART_PARAM)) run();
+    else refresh();
+    const onMessage = (event: MessageEvent) => {
+      if (event.source === window.parent && (event.data as StartMessage)?.type === "larpai:start") run();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+    // Once on mount: run and refresh never change.
+  }, []);
+
+  useEffect(() => {
     // Sites like Amazon and Temu change listing (e.g. picking a variant) without reloading the page.
     let ownTabId: number | undefined;
     browser.tabs.getCurrent().then((tab) => (ownTabId = tab?.id));
@@ -238,17 +249,18 @@ function Report({ reportId, cached }: { reportId: Id<"reports">; cached: boolean
   const report = useQuery(api.reports.get, { reportId });
   const score = (report?.verdict as Verdict | undefined)?.score;
   const label = (report?.verdict as Verdict | undefined)?.label;
+  const reason = (report?.verdict as Verdict | undefined)?.reasons[0];
   const running = report?.status === "running";
 
-  // Mirror the result onto the button on the listing page.
+  // Mirror the result onto the listing page (floating button and inline summary).
   useEffect(() => {
     if (report === undefined) return;
     postToPage(
       label !== undefined
-        ? { type: "larpai:status", state: "done", score, label }
+        ? { type: "larpai:status", state: "done", score, label, reason }
         : { type: "larpai:status", state: running ? "running" : "idle" },
     );
-  }, [report === undefined, running, score, label]);
+  }, [report === undefined, running, score, label, reason]);
 
   if (report === undefined) return <StatusCard title="Connecting" body="Waiting for the report." />;
   if (report === null) return <StatusCard title="Report not found" body="Run the check again from this listing." />;
